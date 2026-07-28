@@ -2659,9 +2659,9 @@ export interface components {
              * @example model.import
              * @enum {string}
              */
-            task_type: "model.import" | "kb.parse" | "kb.index" | "inference.deploy" | "volume.snapshot.create";
+            task_type: "model.import" | "kb.parse" | "kb.index" | "inference.deploy" | "volume.snapshot.create" | "volume.expand" | "volume.mount" | "volume.unmount" | "volume.create_from_snapshot" | "filesystem.expand" | "filesystem.mount_target.create" | "filesystem.mount" | "filesystem.unmount" | "vector_store.index.rebuild";
             /** @enum {string|null} */
-            resource_type?: "inference_service" | "kb_document" | "model_version" | "volume_snapshot" | null;
+            resource_type?: "inference_service" | "kb_document" | "model_version" | "volume_snapshot" | "volume" | "filesystem" | "filesystem_mount_target" | "vector_store" | null;
             /** Format: uuid */
             resource_id?: string | null;
             /** @enum {string} */
@@ -6459,6 +6459,8 @@ export interface operations {
             /** @description 扩容任务已提交 */
             202: {
                 headers: {
+                    /** @description 任务轮询 URL */
+                    Location?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -6490,6 +6492,8 @@ export interface operations {
             /** @description 挂载任务已提交 */
             202: {
                 headers: {
+                    /** @description 任务轮询 URL */
+                    Location?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -6522,6 +6526,8 @@ export interface operations {
             /** @description 卸载任务已提交 */
             202: {
                 headers: {
+                    /** @description 任务轮询 URL */
+                    Location?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -6554,6 +6560,8 @@ export interface operations {
             /** @description 建盘任务已提交 */
             202: {
                 headers: {
+                    /** @description 任务轮询 URL */
+                    Location?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -6800,6 +6808,8 @@ export interface operations {
             /** @description 挂载目标创建任务已提交 */
             202: {
                 headers: {
+                    /** @description 任务轮询 URL */
+                    Location?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -6831,6 +6841,8 @@ export interface operations {
             /** @description 扩容任务已提交 */
             202: {
                 headers: {
+                    /** @description 任务轮询 URL */
+                    Location?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -6862,6 +6874,8 @@ export interface operations {
             /** @description 挂载任务已提交 */
             202: {
                 headers: {
+                    /** @description 任务轮询 URL */
+                    Location?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -6894,6 +6908,8 @@ export interface operations {
             /** @description 卸载任务已提交 */
             202: {
                 headers: {
+                    /** @description 任务轮询 URL */
+                    Location?: string;
                     [name: string]: unknown;
                 };
                 content: {
@@ -7613,6 +7629,8 @@ export interface operations {
             /** @description 索引重建任务已提交 */
             202: {
                 headers: {
+                    /** @description 任务轮询 URL */
+                    Location?: string;
                     [name: string]: unknown;
                 };
                 content: {
