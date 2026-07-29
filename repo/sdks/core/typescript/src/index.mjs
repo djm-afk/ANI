@@ -159,6 +159,7 @@ export const operations = [
   "deleteVectorStore",
   "getVectorStore",
   "precheckVectorStoreDelete",
+  "deleteVectorStoreDocuments",
   "insertVectorStoreDocuments",
   "deleteVectorStoreKnowledgeBaseLink",
   "setVectorStoreKnowledgeBaseLink",
@@ -334,6 +335,7 @@ export const paths = [
   "DELETE /vector-stores/{vector_store_id}",
   "GET /vector-stores/{vector_store_id}",
   "GET /vector-stores/{vector_store_id}/delete-precheck",
+  "DELETE /vector-stores/{vector_store_id}/documents",
   "POST /vector-stores/{vector_store_id}/documents",
   "DELETE /vector-stores/{vector_store_id}/knowledge-base-link",
   "PUT /vector-stores/{vector_store_id}/knowledge-base-link",
@@ -563,6 +565,7 @@ export const schemas = [
   "UpdateObservabilityAlertRuleRequest",
   "VectorStore",
   "VectorStoreDeletePrecheck",
+  "VectorStoreDocumentDeleteResponse",
   "VectorStoreDocumentInsertRequest",
   "VectorStoreDocumentInsertResponse",
   "VectorStoreIndexStatus",
@@ -669,11 +672,14 @@ export const errorCodes = [
   "CONFLICT",
   "FORBIDDEN",
   "INTERNAL_ERROR",
+  "INVALID_FILTER",
   "NOT_FOUND",
   "NOT_IMPLEMENTED",
   "PRECONDITION_FAILED",
   "RATE_LIMIT_EXCEEDED",
-  "UNAUTHORIZED"
+  "UNAUTHORIZED",
+  "UNAVAILABLE",
+  "VECTOR_STORE_NOT_FOUND"
 ];
 
 export class Client {
