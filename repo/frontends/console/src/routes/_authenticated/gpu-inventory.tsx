@@ -19,6 +19,7 @@ const STATUS_THEME: Record<GpuStatus, 'success' | 'warning' | 'danger' | 'defaul
   in_use: 'warning',
   fault: 'danger',
   maintenance: 'default',
+  sliced: 'warning',
 }
 
 const STATUS_LABEL: Record<GpuStatus, string> = {
@@ -26,6 +27,7 @@ const STATUS_LABEL: Record<GpuStatus, string> = {
   in_use: '占用中',
   fault: '故障',
   maintenance: '维护中',
+  sliced: '切片中',
 }
 
 function GpuInventoryPage() {
