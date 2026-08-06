@@ -1,7 +1,7 @@
 batch: SPEC-COMPAT-A
 phase: Phase 1 / Sprint 4
 source: api/openapi/v1.yaml
-generated_at: '2026-08-05'
+generated_at: '2026-08-06'
 compatibility_rules:
   allowed:
   - Add optional request fields.
@@ -873,6 +873,13 @@ paths:
         schema:
           type: string
       - in: query
+        name: tenant
+        required: false
+        schema:
+          type: string
+          format: uuid
+          nullable: true
+      - in: query
         name: limit
         required: false
         schema:
@@ -906,6 +913,95 @@ paths:
         '401':
           schema: '{}'
         '403':
+          schema: '{}'
+  /gpu-inventory/{device_id}:
+    patch:
+      operation_id: updateGPUDevice
+      rbac_scope: scope:gpu-inventory:write
+      parameters:
+      - in: path
+        name: device_id
+        required: true
+        schema:
+          type: string
+      request_body_required: true
+      request_schema: GpuInventoryDeviceUpdateRequest
+      responses:
+        '200':
+          schema: GPUInventoryRecord
+        '400':
+          schema: '{}'
+        '401':
+          schema: '{}'
+        '403':
+          schema: '{}'
+        '404':
+          schema: '{}'
+  /gpu-inventory/{device_id}/reserve:
+    post:
+      operation_id: reserveGPUDevice
+      rbac_scope: scope:gpu-inventory:write
+      parameters:
+      - in: path
+        name: device_id
+        required: true
+        schema:
+          type: string
+      request_body_required: true
+      request_schema: GpuInventoryReserveRequest
+      responses:
+        '200':
+          schema: GPUInventoryRecord
+        '401':
+          schema: '{}'
+        '403':
+          schema: '{}'
+        '409':
+          schema: '{}'
+        '422':
+          schema: '{}'
+  /gpu-inventory/{device_id}/slices:
+    get:
+      operation_id: listDeviceSlices
+      rbac_scope: scope:gpu-slice:read
+      parameters:
+      - in: path
+        name: device_id
+        required: true
+        schema:
+          type: string
+      request_body_required: false
+      request_schema: '{}'
+      responses:
+        '200':
+          schema: GPUSliceListResponse
+        '401':
+          schema: '{}'
+        '403':
+          schema: '{}'
+    post:
+      operation_id: createDeviceSlices
+      rbac_scope: scope:gpu-slice:write
+      parameters:
+      - in: path
+        name: device_id
+        required: true
+        schema:
+          type: string
+      request_body_required: true
+      request_schema: GPUSliceCreateRequest
+      responses:
+        '201':
+          schema: GPUSliceListResponse
+        '400':
+          schema: '{}'
+        '401':
+          schema: '{}'
+        '403':
+          schema: '{}'
+        '409':
+          schema: '{}'
+        '422':
           schema: '{}'
   /gpu-scheduling/queues:
     get:
@@ -1010,10 +1106,59 @@ paths:
           schema: '{}'
         '404':
           schema: '{}'
+  /gpu-slices/{slice_id}:
+    delete:
+      operation_id: deleteGPUSlice
+      rbac_scope: scope:gpu-slice:write
+      parameters:
+      - in: path
+        name: slice_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      request_body_required: false
+      request_schema: '{}'
+      responses:
+        '204':
+          schema: '{}'
+        '401':
+          schema: '{}'
+        '403':
+          schema: '{}'
+        '404':
+          schema: '{}'
+        '409':
+          schema: '{}'
+    patch:
+      operation_id: updateGPUSlice
+      rbac_scope: scope:gpu-slice:write
+      parameters:
+      - in: path
+        name: slice_id
+        required: true
+        schema:
+          type: string
+          format: uuid
+      request_body_required: true
+      request_schema: GPUSliceReserveRequest
+      responses:
+        '200':
+          schema: GPUSlice
+        '400':
+          schema: '{}'
+        '401':
+          schema: '{}'
+        '403':
+          schema: '{}'
+        '404':
+          schema: '{}'
+        '409':
+          schema: '{}'
   /gpu-specs:
     get:
       operation_id: listGPUSpecs
-      rbac_scope: scope:gpu-inventory:read
+      rbac_scope: scope:gpu-spec:read
       parameters:
       - in: query
         name: gpu_type
@@ -1046,10 +1191,65 @@ paths:
           schema: '{}'
         '403':
           schema: '{}'
+    post:
+      operation_id: createGPUSpec
+      rbac_scope: scope:gpu-spec:write
+      parameters: []
+      request_body_required: true
+      request_schema: GPUSpecCreateRequest
+      responses:
+        '201':
+          schema: GPUSpec
+        '400':
+          schema: '{}'
+        '401':
+          schema: '{}'
+        '403':
+          schema: '{}'
+        '409':
+          schema: '{}'
+        '422':
+          schema: '{}'
+  /gpu-specs/availability:
+    get:
+      operation_id: getGPUSpecAvailability
+      rbac_scope: scope:gpu-spec:read scope:gpu-slice:read
+      parameters: []
+      request_body_required: false
+      request_schema: '{}'
+      responses:
+        '200':
+          schema: SpecAvailability
+        '401':
+          schema: '{}'
+        '403':
+          schema: '{}'
   /gpu-specs/{spec_id}:
+    delete:
+      operation_id: deleteGPUSpec
+      rbac_scope: scope:gpu-spec:write
+      parameters:
+      - in: path
+        name: spec_id
+        required: true
+        schema:
+          type: string
+      request_body_required: false
+      request_schema: '{}'
+      responses:
+        '204':
+          schema: '{}'
+        '401':
+          schema: '{}'
+        '403':
+          schema: '{}'
+        '404':
+          schema: '{}'
+        '409':
+          schema: '{}'
     get:
       operation_id: getGPUSpec
-      rbac_scope: scope:gpu-inventory:read
+      rbac_scope: scope:gpu-spec:read
       parameters:
       - in: path
         name: spec_id
@@ -3509,6 +3709,127 @@ paths:
           schema: '{}'
         '403':
           schema: '{}'
+  /quota-meta:
+    get:
+      operation_id: listQuotaMeta
+      rbac_scope: scope:quota-meta:read
+      parameters: []
+      request_body_required: false
+      request_schema: '{}'
+      responses:
+        '200':
+          schema: '{}'
+        '401':
+          schema: '{}'
+        '403':
+          schema: '{}'
+    post:
+      operation_id: registerQuotaMeta
+      rbac_scope: scope:quota-meta:write
+      parameters: []
+      request_body_required: true
+      request_schema: 'type: object'
+      responses:
+        '201':
+          schema: '{}'
+        '400':
+          schema: '{}'
+        '401':
+          schema: '{}'
+        '403':
+          schema: '{}'
+        '409':
+          schema: '{}'
+  /quota-meta/{resource_type}:
+    patch:
+      operation_id: updateQuotaMeta
+      rbac_scope: scope:quota-meta:write
+      parameters:
+      - in: path
+        name: resource_type
+        required: true
+        schema:
+          type: string
+      request_body_required: true
+      request_schema: 'type: object'
+      responses:
+        '200':
+          schema: '{}'
+        '400':
+          schema: '{}'
+        '401':
+          schema: '{}'
+        '403':
+          schema: '{}'
+        '404':
+          schema: '{}'
+  /quotas:
+    get:
+      operation_id: listQuota
+      rbac_scope: scope:quota:read
+      parameters:
+      - in: query
+        name: tenant_id
+        required: false
+        schema:
+          type: string
+          format: uuid
+      - in: query
+        name: limit
+        required: false
+        schema:
+          type: integer
+          minimum: 1
+          maximum: 200
+      - in: query
+        name: cursor
+        required: false
+        schema:
+          type: string
+      request_body_required: false
+      request_schema: '{}'
+      responses:
+        '200':
+          schema: QuotaListResponse
+        '401':
+          schema: '{}'
+        '403':
+          schema: '{}'
+    put:
+      operation_id: putQuota
+      rbac_scope: scope:quota:write
+      parameters: []
+      request_body_required: true
+      request_schema: QuotaPutRequest
+      responses:
+        '200':
+          schema: QuotaView
+        '400':
+          schema: '{}'
+        '401':
+          schema: '{}'
+        '403':
+          schema: '{}'
+        '409':
+          schema: '{}'
+        '422':
+          schema: '{}'
+  /quotas/me:
+    get:
+      operation_id: getMyQuota
+      rbac_scope: scope:quota:read
+      parameters: []
+      request_body_required: false
+      request_schema: '{}'
+      responses:
+        '200':
+          schema: QuotaView
+        '401':
+          schema: '{}'
+        '403':
+          schema: '{}'
+        '404':
+          schema: '{}'
   /readyz:
     get:
       operation_id: readiness
@@ -5233,6 +5554,10 @@ schemas:
           minLength: 1
           maxLength: 128
         enum: []
+      network_config:
+        signature:
+          $ref: '#/components/schemas/InstanceNetworkConfig'
+        enum: []
       replicas:
         signature:
           type: integer
@@ -6677,6 +7002,13 @@ schemas:
         signature:
           type: string
         enum: []
+      slices:
+        signature:
+          type: array
+          nullable: true
+          items:
+            $ref: '#/components/schemas/GPUSliceView'
+        enum: []
       status:
         signature:
           type: string
@@ -6685,6 +7017,7 @@ schemas:
         - in_use
         - fault
         - maintenance
+        - sliced
       tenant_id:
         signature:
           type: string
@@ -6721,6 +7054,11 @@ schemas:
       in_use:
         signature:
           type: integer
+        enum: []
+      sliced:
+        signature:
+          type: integer
+          nullable: true
         enum: []
       total:
         signature:
@@ -6866,6 +7204,179 @@ schemas:
         - inference
         - training
         - batch
+  GPUSlice:
+    type: object
+    required:
+    - device_id
+    - gpu_type
+    - mb_per_share
+    - node_name
+    - shares
+    - slice_id
+    - spec_id
+    - status
+    properties:
+      device_id:
+        signature:
+          type: string
+        enum: []
+      gpu_type:
+        signature:
+          type: string
+        enum: []
+      instance_id:
+        signature:
+          type: string
+          format: uuid
+          nullable: true
+        enum: []
+      mb_per_share:
+        signature:
+          type: integer
+        enum: []
+      node_name:
+        signature:
+          type: string
+        enum: []
+      reserved:
+        signature:
+          type: boolean
+        enum: []
+      shares:
+        signature:
+          type: integer
+        enum: []
+      slice_id:
+        signature:
+          type: string
+          format: uuid
+        enum: []
+      spec_id:
+        signature:
+          type: string
+        enum: []
+      status:
+        signature:
+          type: string
+        enum:
+        - available
+        - in_use
+      tenant_id:
+        signature:
+          type: string
+          format: uuid
+          nullable: true
+        enum: []
+  GPUSliceCreateRequest:
+    type: object
+    required:
+    - count
+    - spec_id
+    properties:
+      count:
+        signature:
+          type: integer
+          minimum: 1
+        enum: []
+      spec_id:
+        signature:
+          type: string
+        enum: []
+  GPUSliceListResponse:
+    type: object
+    required:
+    - items
+    - total
+    properties:
+      items:
+        signature:
+          type: array
+          items:
+            $ref: '#/components/schemas/GPUSlice'
+        enum: []
+      total:
+        signature:
+          type: integer
+          minimum: 0
+        enum: []
+  GPUSliceReserveRequest:
+    type: object
+    required:
+    - tenant_id
+    properties:
+      tenant_id:
+        signature:
+          type: string
+          format: uuid
+          nullable: true
+        enum: []
+  GPUSliceView:
+    type: ''
+    required: []
+    properties: {}
+  GPUSpec:
+    type: object
+    required:
+    - gpu_type
+    - mb_per_share
+    - memory_total_mb
+    - shares
+    - spec_id
+    properties:
+      compute_per_share:
+        signature:
+          type: integer
+          nullable: true
+        enum: []
+      gpu_type:
+        signature:
+          type: string
+        enum: []
+      mb_per_share:
+        signature:
+          type: integer
+          minimum: 1
+        enum: []
+      memory_total_mb:
+        signature:
+          type: integer
+          minimum: 1
+        enum: []
+      shares:
+        signature:
+          type: integer
+          minimum: 1
+        enum: []
+      spec_id:
+        signature:
+          type: string
+        enum: []
+  GPUSpecCreateRequest:
+    type: object
+    required:
+    - gpu_type
+    - memory_total_mb
+    - shares
+    properties:
+      compute_per_share:
+        signature:
+          type: integer
+          nullable: true
+        enum: []
+      gpu_type:
+        signature:
+          type: string
+        enum: []
+      memory_total_mb:
+        signature:
+          type: integer
+          minimum: 1
+        enum: []
+      shares:
+        signature:
+          type: integer
+          minimum: 1
+        enum: []
   GPUSpecListResponse:
     type: object
     required:
@@ -6929,6 +7440,27 @@ schemas:
         signature:
           type: integer
           minimum: 1
+        enum: []
+  GpuInventoryDeviceUpdateRequest:
+    type: object
+    required:
+    - status
+    properties:
+      status:
+        signature:
+          type: string
+        enum:
+        - maintenance
+        - idle
+  GpuInventoryReserveRequest:
+    type: object
+    required:
+    - tenant_id
+    properties:
+      tenant_id:
+        signature:
+          type: string
+          format: uuid
         enum: []
   HealthCheck:
     type: object
@@ -9768,6 +10300,77 @@ schemas:
           items:
             type: object
         enum: []
+  QuotaDimensions:
+    type: object
+    required: []
+    properties:
+      cpu_core:
+        signature:
+          type: integer
+          minimum: 0
+        enum: []
+      gpu_count:
+        signature:
+          type: integer
+          minimum: 0
+        enum: []
+      memory_gb:
+        signature:
+          type: integer
+          minimum: 0
+        enum: []
+      storage_gb:
+        signature:
+          type: integer
+          minimum: 0
+        enum: []
+      token_count:
+        signature:
+          type: integer
+          minimum: 0
+        enum: []
+  QuotaListResponse:
+    type: object
+    required:
+    - items
+    properties:
+      items:
+        signature:
+          type: array
+          items:
+            $ref: '#/components/schemas/QuotaView'
+        enum: []
+  QuotaPutRequest:
+    type: object
+    required:
+    - resources
+    - tenant_id
+    properties:
+      resources:
+        signature:
+          $ref: '#/components/schemas/QuotaDimensions'
+        enum: []
+      tenant_id:
+        signature:
+          type: string
+          format: uuid
+        enum: []
+  QuotaView:
+    type: object
+    required:
+    - tenant_id
+    properties:
+      resources:
+        signature:
+          type: object
+          additionalProperties:
+            type: object
+        enum: []
+      tenant_id:
+        signature:
+          type: string
+          format: uuid
+        enum: []
   RefreshAccessTokenRequest:
     type: object
     required:
@@ -11468,6 +12071,22 @@ schemas:
           type: string
           minLength: 1
           maxLength: 128
+        enum: []
+  SpecAvailability:
+    type: object
+    required:
+    - quota_remaining
+    - specs
+    properties:
+      quota_remaining:
+        signature:
+          type: integer
+        enum: []
+      specs:
+        signature:
+          type: array
+          items:
+            type: object
         enum: []
   StorageBucketACLUpdateRequest:
     type: object

@@ -140,8 +140,8 @@
         <dl class="facts">
           <div><dt>Version</dt><dd>1.0.0</dd></div>
           <div><dt>Server</dt><dd><code>https://{host}/api/v1</code></dd></div>
-          <div><dt>Operations</dt><dd>187</dd></div>
-          <div><dt>Schemas</dt><dd>253</dd></div>
+          <div><dt>Operations</dt><dd>202</dd></div>
+          <div><dt>Schemas</dt><dd>267</dd></div>
         </dl>
       </section>
 
@@ -504,6 +504,38 @@
           <td>200, 401, 403</td>
         </tr>
         <tr>
+          <td><span class="method method-patch">PATCH</span></td>
+          <td><code>/gpu-inventory/{device_id}</code></td>
+          <td><code>updateGPUDevice</code></td>
+          <td>设备状态翻转（标维护/恢复）</td>
+          <td><code>scope:gpu-inventory:write</code></td>
+          <td>200, 400, 401, 403, 404</td>
+        </tr>
+        <tr>
+          <td><span class="method method-post">POST</span></td>
+          <td><code>/gpu-inventory/{device_id}/reserve</code></td>
+          <td><code>reserveGPUDevice</code></td>
+          <td>整卡预留给租户</td>
+          <td><code>scope:gpu-inventory:write</code></td>
+          <td>200, 401, 403, 409, 422</td>
+        </tr>
+        <tr>
+          <td><span class="method method-get">GET</span></td>
+          <td><code>/gpu-inventory/{device_id}/slices</code></td>
+          <td><code>listDeviceSlices</code></td>
+          <td>列某卡切片</td>
+          <td><code>scope:gpu-slice:read</code></td>
+          <td>200, 401, 403</td>
+        </tr>
+        <tr>
+          <td><span class="method method-post">POST</span></td>
+          <td><code>/gpu-inventory/{device_id}/slices</code></td>
+          <td><code>createDeviceSlices</code></td>
+          <td>切分声明</td>
+          <td><code>scope:gpu-slice:write</code></td>
+          <td>201, 400, 401, 403, 409, 422</td>
+        </tr>
+        <tr>
           <td><span class="method method-get">GET</span></td>
           <td><code>/gpu-scheduling/queues</code></td>
           <td><code>listGPUSchedulingQueues</code></td>
@@ -544,19 +576,59 @@
           <td>200, 400, 401, 403, 404</td>
         </tr>
         <tr>
+          <td><span class="method method-delete">DELETE</span></td>
+          <td><code>/gpu-slices/{slice_id}</code></td>
+          <td><code>deleteGPUSlice</code></td>
+          <td>回收切片</td>
+          <td><code>scope:gpu-slice:write</code></td>
+          <td>204, 401, 403, 404, 409</td>
+        </tr>
+        <tr>
+          <td><span class="method method-patch">PATCH</span></td>
+          <td><code>/gpu-slices/{slice_id}</code></td>
+          <td><code>updateGPUSlice</code></td>
+          <td>设置/收回切片预留</td>
+          <td><code>scope:gpu-slice:write</code></td>
+          <td>200, 400, 401, 403, 404, 409</td>
+        </tr>
+        <tr>
           <td><span class="method method-get">GET</span></td>
           <td><code>/gpu-specs</code></td>
           <td><code>listGPUSpecs</code></td>
           <td>查询可选 GPU 规格</td>
-          <td><code>scope:gpu-inventory:read</code></td>
+          <td><code>scope:gpu-spec:read</code></td>
           <td>200, 401, 403</td>
+        </tr>
+        <tr>
+          <td><span class="method method-post">POST</span></td>
+          <td><code>/gpu-specs</code></td>
+          <td><code>createGPUSpec</code></td>
+          <td>创建 GPU 规格</td>
+          <td><code>scope:gpu-spec:write</code></td>
+          <td>201, 400, 401, 403, 409, 422</td>
+        </tr>
+        <tr>
+          <td><span class="method method-get">GET</span></td>
+          <td><code>/gpu-specs/availability</code></td>
+          <td><code>getGPUSpecAvailability</code></td>
+          <td>查询 GPU 规格可用性（按租户）</td>
+          <td><code>scope:gpu-spec:read scope:gpu-slice:read</code></td>
+          <td>200, 401, 403</td>
+        </tr>
+        <tr>
+          <td><span class="method method-delete">DELETE</span></td>
+          <td><code>/gpu-specs/{spec_id}</code></td>
+          <td><code>deleteGPUSpec</code></td>
+          <td>删除 GPU 规格</td>
+          <td><code>scope:gpu-spec:write</code></td>
+          <td>204, 401, 403, 404, 409</td>
         </tr>
         <tr>
           <td><span class="method method-get">GET</span></td>
           <td><code>/gpu-specs/{spec_id}</code></td>
           <td><code>getGPUSpec</code></td>
           <td>查询单个 GPU 规格</td>
-          <td><code>scope:gpu-inventory:read</code></td>
+          <td><code>scope:gpu-spec:read</code></td>
           <td>200, 401, 403, 404</td>
         </tr>
         <tr>
@@ -1297,6 +1369,54 @@
         </tr>
         <tr>
           <td><span class="method method-get">GET</span></td>
+          <td><code>/quota-meta</code></td>
+          <td><code>listQuotaMeta</code></td>
+          <td>列资源维度（不在本次 scope，佳生 PR-1a/PR-8）</td>
+          <td><code>scope:quota-meta:read</code></td>
+          <td>200, 401, 403</td>
+        </tr>
+        <tr>
+          <td><span class="method method-post">POST</span></td>
+          <td><code>/quota-meta</code></td>
+          <td><code>registerQuotaMeta</code></td>
+          <td>注册维度（不在本次 scope，佳生 PR-1a/PR-8）</td>
+          <td><code>scope:quota-meta:write</code></td>
+          <td>201, 400, 401, 403, 409</td>
+        </tr>
+        <tr>
+          <td><span class="method method-patch">PATCH</span></td>
+          <td><code>/quota-meta/{resource_type}</code></td>
+          <td><code>updateQuotaMeta</code></td>
+          <td>更新维度（不在本次 scope，佳生 PR-1a/PR-8）</td>
+          <td><code>scope:quota-meta:write</code></td>
+          <td>200, 400, 401, 403, 404</td>
+        </tr>
+        <tr>
+          <td><span class="method method-get">GET</span></td>
+          <td><code>/quotas</code></td>
+          <td><code>listQuota</code></td>
+          <td>列租户配额（BOSS）</td>
+          <td><code>scope:quota:read</code></td>
+          <td>200, 401, 403</td>
+        </tr>
+        <tr>
+          <td><span class="method method-put">PUT</span></td>
+          <td><code>/quotas</code></td>
+          <td><code>putQuota</code></td>
+          <td>分配/更新租户配额（BOSS）</td>
+          <td><code>scope:quota:write</code></td>
+          <td>200, 400, 401, 403, 409, 422</td>
+        </tr>
+        <tr>
+          <td><span class="method method-get">GET</span></td>
+          <td><code>/quotas/me</code></td>
+          <td><code>getMyQuota</code></td>
+          <td>查自己配额（Console）</td>
+          <td><code>scope:quota:read</code></td>
+          <td>200, 401, 403, 404</td>
+        </tr>
+        <tr>
+          <td><span class="method method-get">GET</span></td>
           <td><code>/readyz</code></td>
           <td><code>readiness</code></td>
           <td>Readiness probe（服务就绪检查）</td>
@@ -1733,8 +1853,17 @@
         <li><code>GPUSchedulingQueueCreateRequest</code></li>
         <li><code>GPUSchedulingQueueListResponse</code></li>
         <li><code>GPUSchedulingQueueUpdateRequest</code></li>
+        <li><code>GPUSlice</code></li>
+        <li><code>GPUSliceCreateRequest</code></li>
+        <li><code>GPUSliceListResponse</code></li>
+        <li><code>GPUSliceReserveRequest</code></li>
+        <li><code>GPUSliceView</code></li>
+        <li><code>GPUSpec</code></li>
+        <li><code>GPUSpecCreateRequest</code></li>
         <li><code>GPUSpecListResponse</code></li>
         <li><code>GPUSpecSummary</code></li>
+        <li><code>GpuInventoryDeviceUpdateRequest</code></li>
+        <li><code>GpuInventoryReserveRequest</code></li>
         <li><code>HealthCheck</code></li>
         <li><code>InstanceAccessSummary</code></li>
         <li><code>InstanceComputeSummary</code></li>
@@ -1814,6 +1943,10 @@
         <li><code>PlatformPasswordLoginRequest</code></li>
         <li><code>PutEmailSmtpConfigRequest</code></li>
         <li><code>PutEmailSubscriptionsRequest</code></li>
+        <li><code>QuotaDimensions</code></li>
+        <li><code>QuotaListResponse</code></li>
+        <li><code>QuotaPutRequest</code></li>
+        <li><code>QuotaView</code></li>
         <li><code>RefreshAccessTokenRequest</code></li>
         <li><code>RefreshAccessTokenResponse</code></li>
         <li><code>RegistryArtifact</code></li>
@@ -1862,6 +1995,7 @@
         <li><code>SecretListResponse</code></li>
         <li><code>SendTestEmailResponse</code></li>
         <li><code>SetRegistryPermissionRequest</code></li>
+        <li><code>SpecAvailability</code></li>
         <li><code>StorageBucketACLUpdateRequest</code></li>
         <li><code>StorageBucketClassUpdateRequest</code></li>
         <li><code>StorageBucketLifecycleRule</code></li>

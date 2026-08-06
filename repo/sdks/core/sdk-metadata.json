@@ -263,6 +263,30 @@
       "scope": "scope:gpu-inventory:read"
     },
     {
+      "operationId": "updateGPUDevice",
+      "method": "PATCH",
+      "path": "/gpu-inventory/{device_id}",
+      "scope": "scope:gpu-inventory:write"
+    },
+    {
+      "operationId": "reserveGPUDevice",
+      "method": "POST",
+      "path": "/gpu-inventory/{device_id}/reserve",
+      "scope": "scope:gpu-inventory:write"
+    },
+    {
+      "operationId": "listDeviceSlices",
+      "method": "GET",
+      "path": "/gpu-inventory/{device_id}/slices",
+      "scope": "scope:gpu-slice:read"
+    },
+    {
+      "operationId": "createDeviceSlices",
+      "method": "POST",
+      "path": "/gpu-inventory/{device_id}/slices",
+      "scope": "scope:gpu-slice:write"
+    },
+    {
       "operationId": "listGPUSchedulingQueues",
       "method": "GET",
       "path": "/gpu-scheduling/queues",
@@ -293,16 +317,46 @@
       "scope": "scope:gpu-scheduling:write"
     },
     {
+      "operationId": "deleteGPUSlice",
+      "method": "DELETE",
+      "path": "/gpu-slices/{slice_id}",
+      "scope": "scope:gpu-slice:write"
+    },
+    {
+      "operationId": "updateGPUSlice",
+      "method": "PATCH",
+      "path": "/gpu-slices/{slice_id}",
+      "scope": "scope:gpu-slice:write"
+    },
+    {
       "operationId": "listGPUSpecs",
       "method": "GET",
       "path": "/gpu-specs",
-      "scope": "scope:gpu-inventory:read"
+      "scope": "scope:gpu-spec:read"
+    },
+    {
+      "operationId": "createGPUSpec",
+      "method": "POST",
+      "path": "/gpu-specs",
+      "scope": "scope:gpu-spec:write"
+    },
+    {
+      "operationId": "getGPUSpecAvailability",
+      "method": "GET",
+      "path": "/gpu-specs/availability",
+      "scope": "scope:gpu-spec:read scope:gpu-slice:read"
+    },
+    {
+      "operationId": "deleteGPUSpec",
+      "method": "DELETE",
+      "path": "/gpu-specs/{spec_id}",
+      "scope": "scope:gpu-spec:write"
     },
     {
       "operationId": "getGPUSpec",
       "method": "GET",
       "path": "/gpu-specs/{spec_id}",
-      "scope": "scope:gpu-inventory:read"
+      "scope": "scope:gpu-spec:read"
     },
     {
       "operationId": "liveness",
@@ -857,6 +911,42 @@
       "scope": "scope:observability:read"
     },
     {
+      "operationId": "listQuotaMeta",
+      "method": "GET",
+      "path": "/quota-meta",
+      "scope": "scope:quota-meta:read"
+    },
+    {
+      "operationId": "registerQuotaMeta",
+      "method": "POST",
+      "path": "/quota-meta",
+      "scope": "scope:quota-meta:write"
+    },
+    {
+      "operationId": "updateQuotaMeta",
+      "method": "PATCH",
+      "path": "/quota-meta/{resource_type}",
+      "scope": "scope:quota-meta:write"
+    },
+    {
+      "operationId": "listQuota",
+      "method": "GET",
+      "path": "/quotas",
+      "scope": "scope:quota:read"
+    },
+    {
+      "operationId": "putQuota",
+      "method": "PUT",
+      "path": "/quotas",
+      "scope": "scope:quota:write"
+    },
+    {
+      "operationId": "getMyQuota",
+      "method": "GET",
+      "path": "/quotas/me",
+      "scope": "scope:quota:read"
+    },
+    {
       "operationId": "readiness",
       "method": "GET",
       "path": "/readyz",
@@ -1199,8 +1289,17 @@
     "GPUSchedulingQueueCreateRequest",
     "GPUSchedulingQueueListResponse",
     "GPUSchedulingQueueUpdateRequest",
+    "GPUSlice",
+    "GPUSliceCreateRequest",
+    "GPUSliceListResponse",
+    "GPUSliceReserveRequest",
+    "GPUSliceView",
+    "GPUSpec",
+    "GPUSpecCreateRequest",
     "GPUSpecListResponse",
     "GPUSpecSummary",
+    "GpuInventoryDeviceUpdateRequest",
+    "GpuInventoryReserveRequest",
     "HealthCheck",
     "InstanceAccessSummary",
     "InstanceComputeSummary",
@@ -1280,6 +1379,10 @@
     "PlatformPasswordLoginRequest",
     "PutEmailSmtpConfigRequest",
     "PutEmailSubscriptionsRequest",
+    "QuotaDimensions",
+    "QuotaListResponse",
+    "QuotaPutRequest",
+    "QuotaView",
     "RefreshAccessTokenRequest",
     "RefreshAccessTokenResponse",
     "RegistryArtifact",
@@ -1328,6 +1431,7 @@
     "SecretListResponse",
     "SendTestEmailResponse",
     "SetRegistryPermissionRequest",
+    "SpecAvailability",
     "StorageBucketACLUpdateRequest",
     "StorageBucketClassUpdateRequest",
     "StorageBucketLifecycleRule",
@@ -1469,6 +1573,7 @@
     "listNetworkVPCs",
     "listStorageObjects",
     "listObservabilityAlertRules",
+    "listQuota",
     "listRegistryImages",
     "listRegistryProjects",
     "listRegistryRepositories",

@@ -1,4 +1,4 @@
-openapi: 3.1.0
+﻿openapi: 3.1.0
 
 info:
   title: KuberCloud ANI Core API
@@ -751,6 +751,9 @@ components:
           $ref: '#/components/schemas/CreateGPUContainerInstanceConfig'
         sandbox_config:
           $ref: '#/components/schemas/SandboxConfig'
+        network_config:
+          $ref: '#/components/schemas/InstanceNetworkConfig'
+          description: "网络配置（预留）。未传时由 adapter 注入平台默认 VPC/Subnet 占位值。"
         boot_image:
           type: string
           nullable: true
@@ -2952,9 +2955,14 @@ components:
         gpu_index:       { type: integer }
         memory_total_mb: { type: integer }
         driver_version:  { type: string, nullable: true }
-        status:          { type: string, enum: [available, in_use, fault, maintenance] }
+        status:          { type: string, enum: [available, in_use, fault, maintenance, sliced] }
         tenant_id:       { type: string, format: uuid, nullable: true }
         instance_id:     { type: string, format: uuid, nullable: true }
+        slices:
+          type: array
+          nullable: true
+          description: "已切分卡片下的切片视图（sliced 状态卡可返回）；整卡/非切分卡为 null 或空。"
+          items: { $ref: '#/components/schemas/GPUSliceView' }
         dev_profile:
           $ref: '#/components/schemas/CoreDevProfileInfo'
 
@@ -3001,6 +3009,10 @@ components:
         in_use:    { type: integer }
         available: { type: integer }
         fault:     { type: integer }
+        sliced:
+          type: integer
+          nullable: true
+          description: "已切分（sliced）状态的卡计数；BOSS 「已切片」KPI 卡数据源。查询时实时聚合。"
         by_gpu_type:
           type: array
           items:
@@ -3012,6 +3024,142 @@ components:
               available: { type: integer }
         dev_profile:
           $ref: '#/components/schemas/CoreDevProfileInfo'
+
+    GPUSpec:
+      type: object
+      description: |
+        Core 集群级 GPU 规格定义（管理模型）。spec_id 引用某张卡型的某档切分规格；
+        本契约描述资源形态，不代表租户配额，不执行 quota check/acquire/release。
+      required: [spec_id, gpu_type, memory_total_mb, shares, mb_per_share]
+      properties:
+        spec_id:          { type: string, description: "规格 ID，格式 {gpu_type}-{mem}-{shares}；实例创建通过 spec_id 引用。" }
+        gpu_type:         { type: string, description: "必须与 GPU inventory 的 gpu_type 一致。" }
+        memory_total_mb:  { type: integer, minimum: 1, description: "物理卡显存，单位 MiB。" }
+        shares:           { type: integer, minimum: 1, description: "每张物理卡的切分份数；1 表示整卡规格。" }
+        mb_per_share:     { type: integer, minimum: 1, description: "每份保证显存，单位 MiB。" }
+        compute_per_share: { type: integer, nullable: true, description: "每份算力（预留，当前 null）。" }
+
+    GPUSpecCreateRequest:
+      type: object
+      required: [gpu_type, memory_total_mb, shares]
+      properties:
+        gpu_type:         { type: string, description: "必须与 GPU inventory 的 gpu_type 一致，创建时校验。" }
+        memory_total_mb:  { type: integer, minimum: 1 }
+        shares:           { type: integer, minimum: 1, description: "1(整卡)/2/4/8。" }
+        compute_per_share: { type: integer, nullable: true }
+
+    GPUSlice:
+      type: object
+      required: [slice_id, device_id, node_name, spec_id, gpu_type, shares, mb_per_share, status]
+      properties:
+        slice_id:      { type: string, format: uuid }
+        device_id:     { type: string, description: "与 GPUInventoryRecord.id 同源 UUID v5。" }
+        node_name:     { type: string }
+        spec_id:       { type: string }
+        gpu_type:      { type: string }
+        shares:        { type: integer }
+        mb_per_share:  { type: integer, description: "单位 MiB。" }
+        tenant_id:     { type: string, format: uuid, nullable: true, description: "NULL=共享池（未分配，暂不可用于实例）。" }
+        reserved:      { type: boolean, description: "锁定/暂停开关，与 tenant_id 正交。" }
+        instance_id:   { type: string, format: uuid, nullable: true }
+        status:        { type: string, enum: [available, in_use] }
+
+    GPUSliceView:
+      allOf:
+        - $ref: '#/components/schemas/GPUSlice'
+      description: "GPUInventoryRecord.slices 数组项的截断展示视图，字段与 GPUSlice 一致。"
+
+    GPUSliceCreateRequest:
+      type: object
+      required: [spec_id, count]
+      properties:
+        spec_id:  { type: string, description: "引用 GPUSpec.spec_id。" }
+        count:    { type: integer, minimum: 1, description: "本卡该档位切分的切片份数。" }
+
+    GPUSliceListResponse:
+      type: object
+      required: [items, total]
+      properties:
+        items:  { type: array, items: { $ref: '#/components/schemas/GPUSlice' } }
+        total:  { type: integer, minimum: 0 }
+
+    GPUSliceReserveRequest:
+      type: object
+      required: [tenant_id]
+      properties:
+        tenant_id: { type: string, format: uuid, nullable: true, description: "传租户 UUID 设置预留；传 null 收回预留。" }
+
+    GpuInventoryDeviceUpdateRequest:
+      type: object
+      required: [status]
+      properties:
+        status: { type: string, enum: [maintenance, idle], description: "maintenance=标维护，idle=恢复空闲。" }
+
+    GpuInventoryReserveRequest:
+      type: object
+      required: [tenant_id]
+      properties:
+        tenant_id: { type: string, format: uuid }
+
+    SpecAvailability:
+      type: object
+      description: |
+        GET /gpu-specs/availability 返回的拆分结构：顶层 quota_remaining 表示当前租户配额余量，
+        每个 spec 给出实际可用切片数与按配额折算后的可用数（取 min），供前端选规格后本地重算。
+      required: [quota_remaining, specs]
+      properties:
+        quota_remaining: { type: integer, description: "total - used - reserved，当前租户配额余量。" }
+        specs:
+          type: array
+          items:
+            type: object
+            required: [spec_id, available_slices_count, available_count]
+            properties:
+              spec_id:               { type: string }
+              available_slices_count: { type: integer, description: "实际可用切片数（tenant_id=A AND reserved=false AND status=available）。" }
+              available_count:       { type: integer, description: "min(available_slices_count, quota_remaining)，向后兼容。" }
+
+    QuotaDimensions:
+      type: object
+      description: "租户配额各资源维度上限（total）；单位 1 槽位 = 1（整卡与 vGPU 切片均算 1）。resource_type 对齐 quota-meta 注册的 8 维度。"
+      properties:
+        gpu_count:   { type: integer, minimum: 0, description: "GPU 份数/槽位数。" }
+        cpu_core:    { type: integer, minimum: 0, description: "CPU 核数。" }
+        memory_gb:   { type: integer, minimum: 0, description: "内存 GB。" }
+        storage_gb:  { type: integer, minimum: 0, description: "存储 GB。" }
+        token_count: { type: integer, minimum: 0 }
+
+    QuotaPutRequest:
+      type: object
+      required: [tenant_id, resources]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        resources:
+          $ref: '#/components/schemas/QuotaDimensions'
+
+    QuotaView:
+      type: object
+      required: [tenant_id]
+      properties:
+        tenant_id: { type: string, format: uuid }
+        resources:
+          type: object
+          description: "各维度键 → {total, reserved, used}。"
+          additionalProperties:
+            type: object
+            required: [total, reserved, used]
+            properties:
+              total:    { type: integer, minimum: 0 }
+              reserved: { type: integer, minimum: 0 }
+              used:     { type: integer, minimum: 0 }
+
+    QuotaListResponse:
+      type: object
+      required: [items]
+      properties:
+        items:
+          type: array
+          items: { $ref: '#/components/schemas/QuotaView' }
 
     GPUSchedulingQueue:
       type: object
@@ -7050,8 +7198,9 @@ paths:
       x-ani-rbac-scope: "scope:gpu-inventory:read"
       parameters:
         - { name: gpu_type,  in: query, schema: { type: string } }
-        - { name: status,    in: query, schema: { type: string, enum: [available, in_use, fault, maintenance] } }
+        - { name: status,    in: query, schema: { type: string, enum: [available, in_use, fault, maintenance, sliced] } }
         - { name: node_name, in: query, schema: { type: string } }
+        - { name: tenant,    in: query, schema: { type: string, format: uuid, nullable: true }, description: "按租户过滤（可选）；平台身份查询时传 UUID，Guest 身份固定自身租户。" }
         - { name: limit,  in: query, schema: { type: integer, default: 50, minimum: 1, maximum: 200 } }
         - { name: cursor, in: query, schema: { type: string } }
       responses:
@@ -7078,6 +7227,257 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
 
+  /gpu-inventory/{device_id}:
+    patch:
+      operationId: updateGPUDevice
+      summary: 设备状态翻转（标维护/恢复）
+      description: BOSS 运维操作：将卡片标记为维护态或恢复空闲。维护态卡不参与规格选择/切片。
+      tags: [GPUInventory]
+      x-ani-rbac-scope: "scope:gpu-inventory:write"
+      parameters:
+        - { name: device_id, in: path, required: true, schema: { type: string }, description: "UUID v5 确定性设备 ID。" }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GpuInventoryDeviceUpdateRequest' }
+      responses:
+        "200":
+          description: 更新后的设备
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GPUInventoryRecord' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /gpu-inventory/{device_id}/reserve:
+    post:
+      operationId: reserveGPUDevice
+      summary: 整卡预留给租户
+      description: |
+        BOSS 将整卡（shares=1 规格）预留给某租户。校验：①存在 shares=1 GPUSpec 否则 422；
+        ②该 device 无已切分记录否则 409 DEVICE_ALREADY_SLICED。
+      tags: [GPUInventory]
+      x-ani-rbac-scope: "scope:gpu-inventory:write"
+      parameters:
+        - { name: device_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GpuInventoryReserveRequest' }
+      responses:
+        "200":
+          description: 预留结果
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GPUInventoryRecord' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }
+        "422": { $ref: '#/components/responses/PreconditionFailed' }
+
+  /gpu-inventory/{device_id}/slices:
+    get:
+      operationId: listDeviceSlices
+      summary: 列某卡切片
+      description: 返回某物理设备下已切分的切片列表。
+      tags: [GPUInventory]
+      x-ani-rbac-scope: "scope:gpu-slice:read"
+      parameters:
+        - { name: device_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "200":
+          description: 切片列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GPUSliceListResponse' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+    post:
+      operationId: createDeviceSlices
+      summary: 切分声明
+      description: BOSS 将某卡按指定 spec_id 档位切分为若干切片（写 gpu_slices 表），并回写设备状态 sliced。
+      tags: [GPUInventory]
+      x-ani-rbac-scope: "scope:gpu-slice:write"
+      parameters:
+        - { name: device_id, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GPUSliceCreateRequest' }
+      responses:
+        "201":
+          description: 切分成功，返回切片列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GPUSliceListResponse' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }
+        "422": { $ref: '#/components/responses/PreconditionFailed' }
+
+  /gpu-slices/{slice_id}:
+    patch:
+      operationId: updateGPUSlice
+      summary: 设置/收回切片预留
+      description: |
+        BOSS 将空闲切片预留给某租户，或收回预留。预留校验（WithPlatformTx 内按序）：
+        GetTotalForUpdateTx + CountByTenantTx + AssignToTenantTx，超配额返回 409 QUOTA_EXCEEDED。
+      tags: [GPUInventory]
+      x-ani-rbac-scope: "scope:gpu-slice:write"
+      parameters:
+        - { name: slice_id, in: path, required: true, schema: { type: string, format: uuid } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GPUSliceReserveRequest' }
+      responses:
+        "200":
+          description: 更新后的切片
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GPUSlice' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409": { $ref: '#/components/responses/Conflict' }
+    delete:
+      operationId: deleteGPUSlice
+      summary: 回收切片
+      description: 回收未使用（status=available）的切片；in_use 切片返回 409 SLICE_IN_USE。
+      tags: [GPUInventory]
+      x-ani-rbac-scope: "scope:gpu-slice:write"
+      parameters:
+        - { name: slice_id, in: path, required: true, schema: { type: string, format: uuid } }
+      responses:
+        "204":
+          description: 回收成功
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409": { $ref: '#/components/responses/Conflict' }
+
+  # ── 配额（quota）─────────────────────────────────────────────────────────────
+  # /quota-meta 3 项属佳生 PR-1a/PR-8 实现（schema 由佳生 PR 定义），此处仅列蓝图完整性，不在本批次 GPU-SPEC-CONTRACT-A scope。
+  /quota-meta:
+    get:
+      operationId: listQuotaMeta
+      summary: 列资源维度（不在本次 scope，佳生 PR-1a/PR-8）
+      description: 列可限额资源维度定义。由佳生 PR-1a/PR-8 实现（含响应 schema），本契约仅保留蓝图占位。
+      tags: [Quota]
+      x-ani-rbac-scope: "scope:quota-meta:read"
+      responses:
+        "200":
+          description: 资源维度列表（schema 由佳生 PR 定义）
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+    post:
+      operationId: registerQuotaMeta
+      summary: 注册维度（不在本次 scope，佳生 PR-1a/PR-8）
+      description: 平台注册可限额资源维度。由佳生 PR-1a/PR-8 实现（含请求/响应 schema），本契约仅保留蓝图占位。
+      tags: [Quota]
+      x-ani-rbac-scope: "scope:quota-meta:write"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "201":
+          description: 注册成功（schema 由佳生 PR 定义）
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }
+
+  /quota-meta/{resource_type}:
+    patch:
+      operationId: updateQuotaMeta
+      summary: 更新维度（不在本次 scope，佳生 PR-1a/PR-8）
+      description: 平台更新资源维度定义。由佳生 PR-1a/PR-8 实现（含请求/响应 schema），本契约仅保留蓝图占位。
+      tags: [Quota]
+      x-ani-rbac-scope: "scope:quota-meta:write"
+      parameters:
+        - { name: resource_type, in: path, required: true, schema: { type: string } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { type: object }
+      responses:
+        "200":
+          description: 更新成功（schema 由佳生 PR 定义）
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
+  /quotas:
+    put:
+      operationId: putQuota
+      summary: 分配/更新租户配额（BOSS）
+      description: BOSS 为租户设置各资源维度配额上限（total）。幂等：相同 idempotency_key 重放返回首次结果。
+      tags: [Quota]
+      x-ani-rbac-scope: "scope:quota:write"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/QuotaPutRequest' }
+      responses:
+        "200":
+          description: 更新后的配额
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuotaView' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }
+        "422": { $ref: '#/components/responses/PreconditionFailed' }
+    get:
+      operationId: listQuota
+      summary: 列租户配额（BOSS）
+      description: BOSS 分页/过滤列出租户配额视图。
+      tags: [Quota]
+      x-ani-rbac-scope: "scope:quota:read"
+      parameters:
+        - { name: tenant_id, in: query, schema: { type: string, format: uuid } }
+        - { name: limit,  in: query, schema: { type: integer, default: 50, minimum: 1, maximum: 200 } }
+        - { name: cursor, in: query, schema: { type: string } }
+      responses:
+        "200":
+          description: 租户配额列表
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuotaListResponse' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+
+  /quotas/me:
+    get:
+      operationId: getMyQuota
+      summary: 查自己配额（Console）
+      description: Console 当前租户上下文回显自身配额视图，用于创建实例 KPI 展示。
+      tags: [Quota]
+      x-ani-rbac-scope: "scope:quota:read"
+      responses:
+        "200":
+          description: 当前租户配额
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/QuotaView' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+
   # ── GPU 规格（Core API v1，只读选择契约）──────────────────────────────────────
   /gpu-specs:
     get:
@@ -7087,7 +7487,7 @@ paths:
         返回实例创建可引用的 Core 集群级 GPU 规格。规格只描述 GPU 类型、切分份数和显存，
         不表示当前租户配额，也不触发配额扣减、占用或释放。
       tags: [GPUInventory]
-      x-ani-rbac-scope: "scope:gpu-inventory:read"
+      x-ani-rbac-scope: "scope:gpu-spec:read"
       parameters:
         - { name: gpu_type,  in: query, schema: { type: string } }
         - { name: available, in: query, schema: { type: boolean, default: true } }
@@ -7102,6 +7502,48 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
 
+    post:
+      operationId: createGPUSpec
+      summary: 创建 GPU 规格
+      description: BOSS 创建集群级 GPUSpec 定义（写 GPUSpec CRD）；gpu_type 须存在于 GPU inventory。
+      tags: [GPUInventory]
+      x-ani-rbac-scope: "scope:gpu-spec:write"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/GPUSpecCreateRequest' }
+      responses:
+        "201":
+          description: 创建成功
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/GPUSpec' }
+        "400": { $ref: '#/components/responses/BadRequest' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "409": { $ref: '#/components/responses/Conflict' }
+        "422": { $ref: '#/components/responses/PreconditionFailed' }
+
+  /gpu-specs/availability:
+    get:
+      operationId: getGPUSpecAvailability
+      summary: 查询 GPU 规格可用性（按租户）
+      description: |
+        聚合当前租户各 GPUSpec 的可用切片数与配额余量，供 Console 创建实例下拉使用。
+        返回拆分结构：顶层 quota_remaining（total - used - reserved），每规格 available_slices_count
+        （实际可用切片数）与 available_count（min(available_slices_count, quota_remaining)）。
+      tags: [GPUInventory]
+      x-ani-rbac-scope: "scope:gpu-spec:read scope:gpu-slice:read"
+      responses:
+        "200":
+          description: 按租户聚合的规格可用性
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/SpecAvailability' }
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+
   /gpu-specs/{spec_id}:
     get:
       operationId: getGPUSpec
@@ -7110,7 +7552,7 @@ paths:
         实例服务使用该接口解析 spec_id。available=false 的规格仍可查询以支持历史实例展示，
         但不得用于新实例创建；创建准入由 POST /instances 返回 422 GPUSpecUnavailable。
       tags: [GPUInventory]
-      x-ani-rbac-scope: "scope:gpu-inventory:read"
+      x-ani-rbac-scope: "scope:gpu-spec:read"
       parameters:
         - { name: spec_id, in: path, required: true, schema: { type: string } }
       responses:
@@ -7122,6 +7564,22 @@ paths:
         "401": { $ref: '#/components/responses/Unauthorized' }
         "403": { $ref: '#/components/responses/Forbidden' }
         "404": { $ref: '#/components/responses/NotFound' }
+
+    delete:
+      operationId: deleteGPUSpec
+      summary: 删除 GPU 规格
+      description: BOSS 删除集群级 GPUSpec 定义。有切片引用（gpu_slices.spec_id）时返回 409，禁止删除。
+      tags: [GPUInventory]
+      x-ani-rbac-scope: "scope:gpu-spec:write"
+      parameters:
+        - { name: spec_id, in: path, required: true, schema: { type: string } }
+      responses:
+        "204":
+          description: 删除成功
+        "401": { $ref: '#/components/responses/Unauthorized' }
+        "403": { $ref: '#/components/responses/Forbidden' }
+        "404": { $ref: '#/components/responses/NotFound' }
+        "409": { $ref: '#/components/responses/Conflict' }
 
   # ── GPU 调度队列（Core API Alpha）─────────────────────────────────────────────
   /gpu-scheduling/queues:
