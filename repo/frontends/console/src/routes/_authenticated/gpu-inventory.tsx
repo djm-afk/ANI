@@ -11,7 +11,7 @@ export const Route = createFileRoute('/_authenticated/gpu-inventory')({
 })
 
 // GPUInventoryRecord 与 query.status 共享的状态枚举（OpenAPI 真实来源）
-type GpuStatus = 'available' | 'in_use' | 'fault' | 'maintenance'
+type GpuStatus = 'available' | 'in_use' | 'fault' | 'maintenance' | 'sliced'
 type GpuDevice = components['schemas']['GPUInventoryRecord']
 
 const STATUS_THEME: Record<GpuStatus, 'success' | 'warning' | 'danger' | 'default'> = {

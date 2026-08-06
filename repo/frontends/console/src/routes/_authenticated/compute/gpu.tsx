@@ -27,7 +27,7 @@ export const Route = createFileRoute('/_authenticated/compute/gpu')({
   component: GpuManagementPage,
 })
 
-type GpuStatus = 'available' | 'in_use' | 'fault' | 'maintenance'
+type GpuStatus = 'available' | 'in_use' | 'fault' | 'maintenance' | 'sliced'
 type GpuDevice = components['schemas']['GPUInventoryRecord']
 type ObservabilityQueryResponse = components['schemas']['ObservabilityQueryResponse']
 
