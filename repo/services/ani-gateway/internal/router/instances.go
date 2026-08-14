@@ -3695,7 +3695,6 @@ func (fallbackGPUInventory) PlanScheduling(_ context.Context, request ports.GPUS
 	}, nil
 }
 
-
 func (fallbackGPUInventory) ListSpecAvailability(_ context.Context, _ string) ([]ports.GPUSpecAvailability, error) {
 	return nil, ports.ErrUnsupported
 }

@@ -53,7 +53,7 @@ type GPUSpecVolcanoResources struct {
 
 // GPUSpec sentinel errors (SPEC §6.1 error taxonomy).
 var (
-	ErrGPUSpecNotFound         = errors.New("gpu spec not found")
-	ErrGPUSpecConflict         = errors.New("gpu spec already exists")
-	ErrGPUSpecInUse            = errors.New("gpu spec in use by running instances")
+	ErrGPUSpecNotFound = errors.New("gpu spec not found")
+	ErrGPUSpecConflict = errors.New("gpu spec already exists")
+	ErrGPUSpecInUse    = errors.New("gpu spec in use by running instances")
 )

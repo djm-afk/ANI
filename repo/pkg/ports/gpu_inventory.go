@@ -160,7 +160,12 @@ type GPUInventory interface {
 	GetNodeClass(ctx context.Context, nodeName string) (GPUNodeClass, error)
 	PlanScheduling(ctx context.Context, request GPUSchedulingRequest) (GPUSchedulingDecision, error)
 	// ListSpecAvailability computes per-spec availability for a tenant by
-	// combining tenant quota remaining (allocated - used - reserved) with
-	// node label matching and idle device counts (SPEC §5.1, plan.md §4.4).
+	// combining node label matching and idle device counts (SPEC §5.1,
+	// plan.md §4.4).
+	//
+	// The returned []GPUSpecAvailability does NOT include QuotaRemaining;
+	// the handler is responsible for querying QuotaService separately and
+	// lifting it to the GPUSpecAvailabilityListResponse top-level field
+	// (v1.yaml), since quota_remaining is a tenant-level shared value.
 	ListSpecAvailability(ctx context.Context, tenantID string) ([]GPUSpecAvailability, error)
 }
