@@ -168,9 +168,9 @@ func quotaResponseFromView(v ports.QuotaView) quotaResponse {
 	for rt, total := range v.Total {
 		items = append(items, quotaItem{
 			ResourceType: rt,
-			Total:         total,
-			Used:          v.Used[rt],
-			Reserved:      v.Reserved[rt],
+			Total:        total,
+			Used:         v.Used[rt],
+			Reserved:     v.Reserved[rt],
 		})
 	}
 	return quotaResponse{TenantID: v.TenantID, TenantName: v.TenantName, Items: items}

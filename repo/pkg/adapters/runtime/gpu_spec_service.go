@@ -122,7 +122,7 @@ var _ ports.GPUSpecService = (*LocalGPUSpecService)(nil)
 // inventory. This lets instance creation resolve spec_ids that live as GPUSpec CRD
 // instances (e.g. "rtx-4090-48g-1") while keeping the local dev profile working.
 type CompositeGPUSpecService struct {
-	store   ports.GPUSpecStore
+	store    ports.GPUSpecStore
 	fallback ports.GPUSpecService
 }
 

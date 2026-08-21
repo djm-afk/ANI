@@ -189,13 +189,13 @@ func TestUpsertStatusTx(t *testing.T) {
 		return time.Unix(700, 0)
 	}))
 	record := ports.WorkloadInstanceRecord{
-		TenantID:    "5dbb1d01-0000-4000-8000-000000000001",
-		InstanceID:  "inst_tx_1",
-		Name:        "quota-app",
-		Kind:        ports.WorkloadKindGPUContainer,
-		Provider:    "kubernetes",
-		AuditID:     "audit-tx-1",
-		QuotaTxIDs:  []string{"tx_001", "tx_002"},
+		TenantID:   "5dbb1d01-0000-4000-8000-000000000001",
+		InstanceID: "inst_tx_1",
+		Name:       "quota-app",
+		Kind:       ports.WorkloadKindGPUContainer,
+		Provider:   "kubernetes",
+		AuditID:    "audit-tx-1",
+		QuotaTxIDs: []string{"tx_001", "tx_002"},
 		Status: ports.WorkloadStatus{
 			State: ports.WorkloadStatePending,
 			Ref: ports.WorkloadRef{

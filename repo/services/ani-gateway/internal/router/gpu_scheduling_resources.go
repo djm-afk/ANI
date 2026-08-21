@@ -20,16 +20,16 @@ type gpuSchedulingAPI struct {
 
 // gpuSchedulingQueueResponse is the JSON shape for GPUSchedulingQueue (matches v1.yaml).
 type gpuSchedulingQueueResponse struct {
-	ID                string                      `json:"id"`
-	Name              string                      `json:"name"`
-	Weight            int                         `json:"weight"`
-	Reclaimable       bool                        `json:"reclaimable"`
-	WorkloadClass     string                      `json:"workload_class"`
-	ProjectID         *string                     `json:"project_id,omitempty"`
-	IsPlatformDefault bool                        `json:"is_platform_default"`
+	ID                string                        `json:"id"`
+	Name              string                        `json:"name"`
+	Weight            int                           `json:"weight"`
+	Reclaimable       bool                          `json:"reclaimable"`
+	WorkloadClass     string                        `json:"workload_class"`
+	ProjectID         *string                       `json:"project_id,omitempty"`
+	IsPlatformDefault bool                          `json:"is_platform_default"`
 	Status            *gpuSchedulingQueueStatusJSON `json:"status,omitempty"`
-	CreatedAt         time.Time                   `json:"created_at"`
-	UpdatedAt         time.Time                   `json:"updated_at"`
+	CreatedAt         time.Time                     `json:"created_at"`
+	UpdatedAt         time.Time                     `json:"updated_at"`
 }
 
 type gpuSchedulingQueueStatusJSON struct {

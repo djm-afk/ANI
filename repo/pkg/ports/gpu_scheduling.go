@@ -27,9 +27,9 @@ type GPUSchedulingQueue struct {
 	IsPlatformDefault bool
 	// Status carries the Volcano Queue CRD status.allocated map (SPEC §4.4,
 	// FR-24). Empty when the CRD has no status or the allocated field is absent.
-	Status            GPUSchedulingQueueStatus
-	CreatedAt         time.Time
-	UpdatedAt         time.Time
+	Status    GPUSchedulingQueueStatus
+	CreatedAt time.Time
+	UpdatedAt time.Time
 }
 
 // GPUSchedulingQueueStatus mirrors the Volcano Queue CRD status object

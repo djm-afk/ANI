@@ -91,7 +91,7 @@ func TestKubernetesDryRunRendererVolcanoAnnotationsOnPodTemplate(t *testing.T) {
 		},
 		Annotations: map[string]string{
 			"scheduling.volcano.sh/queue-name":            "ani-test-demo",
-			"ani.kubercloud.io/volcano-node-selector":      nodeSelectorJSON,
+			"ani.kubercloud.io/volcano-node-selector":     nodeSelectorJSON,
 			"ani.kubercloud.io/volcano-resource-requests": resourceRequestJSON,
 		},
 	})

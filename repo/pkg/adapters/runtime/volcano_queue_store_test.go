@@ -534,7 +534,8 @@ func intPtr(v int) *int { return &v }
 
 // TestNormaliseVolcanoQueueState verifies the CRD status.state → API enum
 // mapping required by issue-007 AC L23:
-//   Open→open / Closed→closed / 空/其他→unknown, 大小写归一.
+//
+//	Open→open / Closed→closed / 空/其他→unknown, 大小写归一.
 func TestNormaliseVolcanoQueueState(t *testing.T) {
 	cases := []struct {
 		raw   string
