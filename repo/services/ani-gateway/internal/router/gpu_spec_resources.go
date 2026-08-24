@@ -112,6 +112,12 @@ func (api *gpuSpecAPI) createGPUSpec(ctx context.Context, c *app.RequestContext)
 		writeInstanceError(c, http.StatusBadRequest, "BAD_REQUEST", "mb_per_share must be >= 1")
 		return
 	}
+	// vGPU mode: mb_per_share must be >= volcano vGPU factor (10) to avoid
+	// producing volcano.sh/vgpu-memory=0 in the resource translator.
+	if req.GPUMode == "vgpu" && req.MBPerShare < 10 {
+		writeInstanceError(c, http.StatusBadRequest, "BAD_REQUEST", "mb_per_share must be >= 10 for vgpu mode (volcano vGPU factor)")
+		return
+	}
 	// Validate gpu_type exists in cluster node labels (SPEC §5.2, 422 GPUTypeNotInNodes).
 	if api.inventory != nil {
 		if !api.gpuTypeExistsInNodes(ctx, req.GPUType, req.GPUMode) {
@@ -222,11 +228,14 @@ func sharesToSharingPolicy(shares int) string {
 
 // specInUse checks whether any non-deleted instance references the given
 // spec_id. When metadataStore is available it runs a platform-scoped
-// (RLS-bypass) SQL query across all tenants. Otherwise it returns false
-// with a warning: the tenant-scoped instanceStore.List cannot perform a
-// cross-tenant in-use check, so the fallback is skipped to avoid
-// false-negatives that would allow deleting a spec still referenced by
-// another tenant.
+// (RLS-bypass) SQL query across all tenants. The query checks both
+// gpu_status->>'SpecID' (written by GPUContainer instances) and
+// compute_summary->>'SpecID' (written by all instance kinds when a GPUSpec
+// is set), so Inference/Notebook/BatchJob references are also detected.
+// Otherwise it returns false with a warning: the tenant-scoped
+// instanceStore.List cannot perform a cross-tenant in-use check, so the
+// fallback is skipped to avoid false-negatives that would allow deleting a
+// spec still referenced by another tenant.
 func (api *gpuSpecAPI) specInUse(ctx context.Context, specID string) bool {
 	if api.metadataStore != nil {
 		var count int64
@@ -234,7 +243,7 @@ func (api *gpuSpecAPI) specInUse(ctx context.Context, specID string) bool {
 			return tx.QueryRow(ctx, `
 				SELECT COUNT(*) FROM workload_instances
 				WHERE state <> 'deleted'
-				  AND gpu_status->>'SpecID' = $1
+				  AND (gpu_status->>'SpecID' = $1 OR compute_summary->>'SpecID' = $1)
 			`, specID).Scan(&count)
 		})
 		if err != nil || count > 0 {

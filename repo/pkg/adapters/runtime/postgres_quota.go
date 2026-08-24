@@ -998,28 +998,25 @@ func (q *PostgresQuota) PutReservation(ctx context.Context, idempotencyKey strin
 // GetReservationTx returns the tenant's reservation view inside an
 // externally-owned transaction. The resource_reservation_allocations row is
 // locked FOR UPDATE so the caller can serialise concurrent reservation checks
-// (plan.md §6.3.1 闸 2). When no allocation row exists, allocated=0 is returned
-// (the tenant has not been assigned any reservation yet).
+// (plan.md §6.3.1 闸 2). When no allocation row exists, falls back to the
+// quota total as the allocated limit (consistent with the availability
+// query path in gpu_inventory_resources.go).
 func (q *PostgresQuota) GetReservationTx(ctx context.Context, tx ports.MetadataTx, tenantID string) (ports.ReservationView, error) {
 	if tenantID == "" {
 		return ports.ReservationView{}, fmt.Errorf("%w: tenant_id is required", ports.ErrInvalid)
 	}
 	view := ports.ReservationView{TenantID: tenantID}
-	// Lock the allocation row FOR UPDATE (may not exist → allocated=0).
+	// Lock the allocation row FOR UPDATE (may not exist → fall back to total).
 	var allocated int64
-	err := tx.QueryRow(ctx, `
+	rowErr := tx.QueryRow(ctx, `
 		SELECT allocated_gpu_count FROM resource_reservation_allocations
 		WHERE tenant_id = $1::uuid
 		FOR UPDATE
 	`, tenantID).Scan(&allocated)
-	if err != nil && !errors.Is(err, pgx.ErrNoRows) {
-		return ports.ReservationView{}, err
+	if rowErr != nil && !errors.Is(rowErr, pgx.ErrNoRows) {
+		return ports.ReservationView{}, rowErr
 	}
-	if errors.Is(err, pgx.ErrNoRows) {
-		allocated = 0
-	}
-	// Read used + reserved from the quota row (already locked by the caller
-	// via GetTotalForUpdateTx, but a plain SELECT is fine here).
+	// Read used + reserved from the quota row.
 	var used, reserved int64
 	if err := tx.QueryRow(ctx, `
 		SELECT used, reserved FROM resource_quota
@@ -1029,6 +1026,22 @@ func (q *PostgresQuota) GetReservationTx(ctx context.Context, tx ports.MetadataT
 			return ports.ReservationView{}, ports.ErrQuotaNotFound
 		}
 		return ports.ReservationView{}, err
+	}
+	// When no reservation row exists, fall back to quota total as the
+	// allocated limit so the create path stays consistent with the
+	// availability query path (both use total when no reservation is set).
+	if errors.Is(rowErr, pgx.ErrNoRows) {
+		var total int64
+		if err := tx.QueryRow(ctx, `
+			SELECT total FROM resource_quota
+			WHERE tenant_id = $1::uuid AND resource_type = 'gpu_count'
+		`, tenantID).Scan(&total); err != nil {
+			if errors.Is(err, pgx.ErrNoRows) {
+				return ports.ReservationView{}, ports.ErrQuotaNotFound
+			}
+			return ports.ReservationView{}, err
+		}
+		allocated = total
 	}
 	view.AllocatedGPUCount = allocated
 	view.Used = used

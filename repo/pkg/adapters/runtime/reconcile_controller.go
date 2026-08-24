@@ -663,17 +663,47 @@ func (c *LocalWorkloadReconcileController) confirmQuota(ctx context.Context, rec
 // rolled back by an outbox write failure). Unlike confirmQuota it does NOT
 // write the instance status — it only executes the Confirm SQL so the
 // reserved→used transition is fixed without touching updated_at.
-// Confirm is a no-op when the reservation is already confirmed/cancelled.
+// To avoid unnecessary DB load on every reconcile tick, it first checks
+// whether any txID is still in "reserved" state; if all are already
+// confirmed/cancelled, it skips the Confirm call entirely.
 func (c *LocalWorkloadReconcileController) selfHealConfirm(ctx context.Context, record ports.WorkloadInstanceRecord) error {
 	if c.quotaService == nil || len(record.QuotaTxIDs) == 0 {
 		return nil
 	}
 	return c.metadataStore.WithTenantTx(ctx, func(txCtx context.Context, tx ports.MetadataTx) error {
+		// Fast path: check if any txID is still reserved before calling Confirm.
+		hasReserved, err := c.anyReservationReserved(txCtx, tx, record.QuotaTxIDs)
+		if err != nil {
+			slog.Warn("selfHealConfirm: failed to check reservation state, falling back to Confirm",
+				"instance_id", record.InstanceID,
+				"err", err,
+			)
+		} else if !hasReserved {
+			return nil
+		}
 		if err := c.quotaService.Confirm(txCtx, tx, record.QuotaTxIDs, record.InstanceID); err != nil {
 			return err
 		}
 		return nil
 	})
+}
+
+// anyReservationReserved checks whether any of the given txIDs still has
+// a reservation row in "reserved" state. Returns true if at least one is
+// reserved, false if all are confirmed/cancelled or no rows exist.
+func (c *LocalWorkloadReconcileController) anyReservationReserved(ctx context.Context, tx ports.MetadataTx, txIDs []string) (bool, error) {
+	if len(txIDs) == 0 {
+		return false, nil
+	}
+	var count int
+	err := tx.QueryRow(ctx, `
+		SELECT COUNT(*) FROM resource_reservations
+		WHERE tx_id = ANY($1) AND state = 'reserved'
+	`, txIDs).Scan(&count)
+	if err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // cancelQuota cancels the TCC reservation and writes the failed status in one
@@ -754,12 +784,22 @@ func (c *LocalWorkloadReconcileController) writeOutbox(ctx context.Context, tx p
 	// instance_id is "inst_<uuid>" which is NOT a valid UUID, so the INSERT
 	// would fail with SQLSTATE 22P02 and abort the entire PostgreSQL
 	// transaction — rolling back the quota Confirm/Cancel/Release and status
-	// write that already executed in the same tx. To prevent this, skip the
-	// outbox write entirely when aggregate_id is not a valid UUID.
-	if _, err := uuid.Parse(record.InstanceID); err != nil {
+	// write that already executed in the same tx. Extract the UUID part
+	// from "inst_<uuid>" before writing; skip the outbox write entirely
+	// when no valid UUID can be extracted.
+	aggregateID := extractUUIDFromInstanceID(record.InstanceID)
+	if aggregateID == "" {
+		slog.Warn("writeOutbox: instance_id has no valid UUID, skipping outbox",
+			"instance_id", record.InstanceID,
+			"event_type", eventType,
+		)
 		return nil
 	}
 	if _, err := uuid.Parse(record.TenantID); err != nil {
+		slog.Warn("writeOutbox: tenant_id is not a valid UUID, skipping outbox",
+			"tenant_id", record.TenantID,
+			"event_type", eventType,
+		)
 		return nil
 	}
 	payload, err := encodeOutboxPayload(map[string]any{
@@ -778,7 +818,7 @@ func (c *LocalWorkloadReconcileController) writeOutbox(ctx context.Context, tx p
 	}
 	if err := c.outboxWriter.WriteTx(ctx, tx, OutboxEvent{
 		AggregateType: "workload_instance",
-		AggregateID:   record.InstanceID,
+		AggregateID:   aggregateID,
 		EventType:     eventType,
 		TenantID:      record.TenantID,
 		Payload:       payload,
@@ -791,6 +831,16 @@ func (c *LocalWorkloadReconcileController) writeOutbox(ctx context.Context, tx p
 		return nil
 	}
 	return nil
+}
+
+// extractUUIDFromInstanceID extracts the UUID part from an instance_id
+// formatted as "inst_<uuid>". Returns empty string when no valid UUID is found.
+func extractUUIDFromInstanceID(instanceID string) string {
+	raw := strings.TrimPrefix(instanceID, "inst_")
+	if _, err := uuid.Parse(raw); err != nil {
+		return ""
+	}
+	return raw
 }
 
 // CancelQuotaAndFinalize releases both reserved and used quota and writes the

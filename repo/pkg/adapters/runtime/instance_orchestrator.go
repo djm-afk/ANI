@@ -368,7 +368,14 @@ func (o *LocalInstanceOrchestrator) markApplyFailed(
 	}
 	_ = o.metadataStore.WithTenantTx(ctx, func(txCtx context.Context, tx ports.MetadataTx) error {
 		if o.quotaService != nil && len(record.QuotaTxIDs) > 0 {
-			_ = o.quotaService.Cancel(txCtx, tx, record.QuotaTxIDs)
+			if cancelErr := o.quotaService.Cancel(txCtx, tx, record.QuotaTxIDs); cancelErr != nil {
+				slog.Error("markApplyFailed: quota Cancel failed, reserved quota may leak",
+					"instance_id", record.InstanceID,
+					"quota_tx_ids", record.QuotaTxIDs,
+					"apply_err", applyErr,
+					"cancel_err", cancelErr,
+				)
+			}
 		}
 		return o.storeTx.UpsertStatusTx(txCtx, tx, record)
 	})

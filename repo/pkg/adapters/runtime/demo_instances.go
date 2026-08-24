@@ -4,6 +4,7 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"log/slog"
 	"time"
 
 	"github.com/kubercloud/ani/pkg/ports"
@@ -240,8 +241,14 @@ func (o *QuotaAwareInstanceOrchestrator) Create(ctx context.Context, request por
 		// (SPEC §5.1 FR-28, plan.md §6.3.1 cancelQuotaAndFinalize).
 		createErr := err
 		if len(txIDs) > 0 && o.quotaService != nil && o.metadataStore != nil {
-			_ = o.metadataStore.WithTenantTx(ctx, func(txCtx context.Context, tx ports.MetadataTx) error {
+			if txErr := o.metadataStore.WithTenantTx(ctx, func(txCtx context.Context, tx ports.MetadataTx) error {
 				if cancelErr := o.quotaService.Cancel(txCtx, tx, txIDs); cancelErr != nil {
+					slog.Error("Apply failure: quota Cancel failed, reserved quota may leak",
+						"idempotency_key", request.IdempotencyKey,
+						"quota_tx_ids", txIDs,
+						"create_err", createErr,
+						"cancel_err", cancelErr,
+					)
 					return cancelErr
 				}
 				if o.outboxWriter != nil {
@@ -252,14 +259,21 @@ func (o *QuotaAwareInstanceOrchestrator) Create(ctx context.Context, request por
 					})
 					_ = o.outboxWriter.WriteTx(txCtx, tx, OutboxEvent{
 						AggregateType: "workload_instance",
-						AggregateID:   request.IdempotencyKey,
+						AggregateID:   extractUUIDFromInstanceID(request.IdempotencyKey),
 						EventType:     "instance.create_failed",
 						TenantID:      request.Spec.TenantID,
 						Payload:       payload,
 					})
 				}
 				return nil
-			})
+			}); txErr != nil {
+				slog.Error("Apply failure: Cancel+outbox transaction rolled back",
+					"idempotency_key", request.IdempotencyKey,
+					"quota_tx_ids", txIDs,
+					"create_err", createErr,
+					"tx_err", txErr,
+				)
+			}
 		}
 		return ports.WorkloadInstanceCreateResult{}, err
 	}
