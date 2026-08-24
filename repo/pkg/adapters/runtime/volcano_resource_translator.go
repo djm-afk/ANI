@@ -126,9 +126,11 @@ func buildResourceRequests(spec ports.GPUSpecCRD, count int) map[string]string {
 	} else {
 		// Volcano allocates volcano.sh/vgpu-memory * factor MB, so divide
 		// mb_per_share by the factor to get the Pod resource value.
-		// Use ceiling division to avoid truncation (e.g. 8192/10=820
-		// not 819, ensuring Volcano allocates at least mb_per_share).
-		vgpuMemStr := strconv.Itoa((spec.MBPerShare + volcanoVGPUFactor - 1) / volcanoVGPUFactor)
+		// Use floor division: each slice must not exceed its share of
+		// the GPU memory, otherwise the last slice would request more
+		// than the remaining GPU memory and fail to schedule.
+		// mb_per_share >= 10 is enforced at creation time (gpu_spec_resources.go).
+		vgpuMemStr := strconv.Itoa(spec.MBPerShare / volcanoVGPUFactor)
 		for k, v := range spec.VolcanoResources.VGPU {
 			var formatted string
 			if k == volcanoVGPUResourceName {
