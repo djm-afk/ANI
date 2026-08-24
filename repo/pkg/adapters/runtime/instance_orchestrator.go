@@ -34,6 +34,12 @@ type LocalInstanceOrchestrator struct {
 	// (same transaction as Cancel/Release on Apply failure). nil falls back
 	// to the non-transactional store.UpsertStatus.
 	storeTx ports.WorkloadInstanceStoreTx
+	// translator converts spec_id to Volcano Pod resource requests, node
+	// selector, schedulerName and queue annotation. This is a Core capability
+	// that must work regardless of GPU_QUOTA_ENABLED (plan.md §4.7: "节点标签
+	// 读取/规格管理是 Core 能力,不受 GPU_QUOTA_ENABLED 开关影响"). nil skips
+	// translation (no GPUSpec CRD available).
+	translator *VolcanoResourceTranslator
 }
 
 type InstanceOrchestratorOption func(*LocalInstanceOrchestrator)
@@ -81,6 +87,14 @@ func WithInstanceOrchestratorMetadataStore(store ports.MetadataStore) InstanceOr
 func WithInstanceOrchestratorStoreTx(storeTx ports.WorkloadInstanceStoreTx) InstanceOrchestratorOption {
 	return func(orchestrator *LocalInstanceOrchestrator) {
 		orchestrator.storeTx = storeTx
+	}
+}
+
+// WithInstanceOrchestratorTranslator injects the Volcano resource translator.
+// This is a Core capability independent of GPU_QUOTA_ENABLED (plan.md §4.7).
+func WithInstanceOrchestratorTranslator(translator *VolcanoResourceTranslator) InstanceOrchestratorOption {
+	return func(orchestrator *LocalInstanceOrchestrator) {
+		orchestrator.translator = translator
 	}
 }
 
@@ -147,6 +161,19 @@ func (o *LocalInstanceOrchestrator) Create(ctx context.Context, request ports.Wo
 		identity = &binding
 		request.Spec.Identity = identity
 	}
+	// Volcano resource translation — Core capability, runs regardless of
+	// GPU_QUOTA_ENABLED (plan.md §4.7: "节点标签读取/规格管理是 Core 能力,
+	// 不受 GPU_QUOTA_ENABLED 开关影响").
+	if o.translator != nil && request.Spec.GPUSpec != nil && request.Spec.GPUSpec.SpecID != "" {
+		count := gpuRequestCount(request.Spec)
+		queueName := annotationValue(request.Spec, gpuQueueAnnotation)
+		translation, err := o.translator.Translate(ctx, request.Spec.GPUSpec.SpecID, queueName, count)
+		if err != nil {
+			return ports.WorkloadInstanceCreateResult{}, fmt.Errorf("volcano translation for spec %q: %w", request.Spec.GPUSpec.SpecID, err)
+		}
+		injectVolcanoTranslation(&request.Spec, translation)
+	}
+
 	manifests, err := o.renderer.Render(ctx, request.Spec)
 	if err != nil {
 		return ports.WorkloadInstanceCreateResult{}, err

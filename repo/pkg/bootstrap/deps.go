@@ -293,6 +293,13 @@ func NewCapabilitiesWithConfig(db *pgxpool.Pool, js nats.JetStreamContext, redis
 			runtimeadapter.WithInstanceOrchestratorStoreTx(instanceStore),
 		)
 	}
+	// Volcano resource translation is a Core capability independent of
+	// GPU_QUOTA_ENABLED (plan.md §4.7). Inject into the inner orchestrator
+	// so it works even when quota is disabled.
+	if volcanoTranslator != nil {
+		orchestratorOptions = append(orchestratorOptions,
+			runtimeadapter.WithInstanceOrchestratorTranslator(volcanoTranslator))
+	}
 	innerOrchestrator := runtimeadapter.NewLocalInstanceOrchestrator(
 		planner,
 		runtimeadapter.NewKubernetesDryRunRenderer(planner),
