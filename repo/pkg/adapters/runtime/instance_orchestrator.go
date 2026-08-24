@@ -310,13 +310,16 @@ func (o *LocalInstanceOrchestrator) hasTransactionalQuotaSupport() bool {
 }
 
 // persistWithQuotaTransition writes the instance status and, when the
-// reconcile produced a pending/provisioning → running transition with
-// QuotaTxIDs present, performs TCC Confirm (reserved → used) in the same
-// tenant transaction. This covers the case where the inner Create's
-// synchronous Observe+Reconcile immediately observes Running (e.g. the
-// local provider returns "Running" for Create), which would otherwise
-// bypass the Reconciler's applyStateTransition and leave the quota
-// stuck in "reserved" (SPEC §5.1).
+// reconcile produced a quota-relevant transition with QuotaTxIDs present,
+// performs the TCC action in the same tenant transaction (SPEC §5.1):
+//   - pending/provisioning → running: Confirm (reserved → used)
+//   - pending/provisioning → failed:  Cancel  (release reserved)
+//
+// This covers the case where the inner Create's synchronous Observe+Reconcile
+// immediately observes Running or Failed (e.g. the local provider returns
+// "Running" for Create, or CrashLoopBackOff/ImagePullBackOff is observed
+// immediately), which would otherwise bypass the Reconciler's
+// applyStateTransition and leave the quota stuck in "reserved" (SPEC §5.1).
 func (o *LocalInstanceOrchestrator) persistWithQuotaTransition(ctx context.Context, record ports.WorkloadInstanceRecord, previous, next ports.WorkloadState) error {
 	slog.Info("persistWithQuotaTransition",
 		"instance_id", record.InstanceID,
@@ -334,8 +337,11 @@ func (o *LocalInstanceOrchestrator) persistWithQuotaTransition(ctx context.Conte
 	needsConfirm := (previous == ports.WorkloadStatePending || previous == ports.WorkloadStateProvisioning) &&
 		next == ports.WorkloadStateRunning &&
 		len(record.QuotaTxIDs) > 0
-	if !needsConfirm {
-		slog.Info("persistWithQuotaTransition: needsConfirm=false, plain UpsertStatus",
+	needsCancel := (previous == ports.WorkloadStatePending || previous == ports.WorkloadStateProvisioning) &&
+		next == ports.WorkloadStateFailed &&
+		len(record.QuotaTxIDs) > 0
+	if !needsConfirm && !needsCancel {
+		slog.Info("persistWithQuotaTransition: no TCC action, plain UpsertStatus",
 			"instance_id", record.InstanceID,
 			"previous", previous,
 			"next", next,
@@ -343,22 +349,40 @@ func (o *LocalInstanceOrchestrator) persistWithQuotaTransition(ctx context.Conte
 		)
 		return o.store.UpsertStatus(ctx, record)
 	}
-	slog.Info("persistWithQuotaTransition: executing Confirm in tx",
+	action := "Confirm"
+	if needsCancel {
+		action = "Cancel"
+	}
+	slog.Info("persistWithQuotaTransition: executing TCC action in tx",
 		"instance_id", record.InstanceID,
+		"action", action,
 		"quota_tx_ids", record.QuotaTxIDs,
 	)
 	return o.metadataStore.WithTenantTx(ctx, func(txCtx context.Context, tx ports.MetadataTx) error {
 		if o.quotaService != nil {
-			if err := o.quotaService.Confirm(txCtx, tx, record.QuotaTxIDs, record.InstanceID); err != nil {
-				slog.Error("persistWithQuotaTransition: Confirm failed",
+			if needsConfirm {
+				if err := o.quotaService.Confirm(txCtx, tx, record.QuotaTxIDs, record.InstanceID); err != nil {
+					slog.Error("persistWithQuotaTransition: Confirm failed",
+						"instance_id", record.InstanceID,
+						"err", err,
+					)
+					return err
+				}
+				slog.Info("persistWithQuotaTransition: Confirm succeeded",
 					"instance_id", record.InstanceID,
-					"err", err,
 				)
-				return err
+			} else {
+				if err := o.quotaService.Cancel(txCtx, tx, record.QuotaTxIDs); err != nil {
+					slog.Error("persistWithQuotaTransition: Cancel failed",
+						"instance_id", record.InstanceID,
+						"err", err,
+					)
+					return err
+				}
+				slog.Info("persistWithQuotaTransition: Cancel succeeded",
+					"instance_id", record.InstanceID,
+				)
 			}
-			slog.Info("persistWithQuotaTransition: Confirm succeeded",
-				"instance_id", record.InstanceID,
-			)
 		}
 		return o.storeTx.UpsertStatusTx(txCtx, tx, record)
 	})

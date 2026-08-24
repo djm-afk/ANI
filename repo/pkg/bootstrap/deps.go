@@ -364,15 +364,14 @@ func NewCapabilitiesWithConfig(db *pgxpool.Pool, js nats.JetStreamContext, redis
 			orchestrator,
 			instanceStore,
 			instanceOps,
-			runtimeadapter.WithOperationStore(operationStore),
-			runtimeadapter.WithInstanceLifecycleExecutor(lifecycle),
-			runtimeadapter.WithWorkloadIdentityService(workloadIdentity),
-			runtimeadapter.WithSandboxRuntime(sandboxRuntime),
-			runtimeadapter.WithInstanceStorageService(resolverStorage),
-			runtimeadapter.WithInstanceResourceResolver(runtimeadapter.NewLocalInstanceResourceResolverWithDependencies(resolverNetwork, resolverStorage, gpuSpecs, resourceRegistry, secretService)),
-			runtimeadapter.WithInstanceQuotaService(quotaService),
-			runtimeadapter.WithInstanceMetadataStore(metadata),
-			runtimeadapter.WithInstanceStoreTx(instanceStore),
+			append([]runtimeadapter.InstanceServiceOption{
+				runtimeadapter.WithOperationStore(operationStore),
+				runtimeadapter.WithInstanceLifecycleExecutor(lifecycle),
+				runtimeadapter.WithWorkloadIdentityService(workloadIdentity),
+				runtimeadapter.WithSandboxRuntime(sandboxRuntime),
+				runtimeadapter.WithInstanceStorageService(resolverStorage),
+				runtimeadapter.WithInstanceResourceResolver(runtimeadapter.NewLocalInstanceResourceResolverWithDependencies(resolverNetwork, resolverStorage, gpuSpecs, resourceRegistry, secretService)),
+			}, instanceServiceQuotaOptions(cfg, quotaService, metadata, instanceStore)...)...,
 		),
 		InstanceOps:           instanceOps,
 		InstanceObservability: instanceObservability,
@@ -391,6 +390,22 @@ func NewCapabilitiesWithConfig(db *pgxpool.Pool, js nats.JetStreamContext, redis
 		StorageReconcile:      runtimeadapter.NewLocalStorageStatusReconciler(storageStore),
 		StorageResources:      resolverStorage,
 	}, nil
+}
+
+// instanceServiceQuotaOptions returns the quota-related InstanceService
+// options gated by cfg.GPUQuotaEnabled, matching the inner orchestrator and
+// reconciler gating. When GPU_QUOTA_ENABLED=false the quota service,
+// metadata store and store-tx are NOT injected, so persistLifecycleWithQuota
+// falls back to plain store.UpsertStatus and never calls TryManyTx.
+func instanceServiceQuotaOptions(cfg Config, quotaService ports.QuotaService, metadata ports.MetadataStore, instanceStore ports.WorkloadInstanceStoreTx) []runtimeadapter.InstanceServiceOption {
+	if !cfg.GPUQuotaEnabled {
+		return nil
+	}
+	return []runtimeadapter.InstanceServiceOption{
+		runtimeadapter.WithInstanceQuotaService(quotaService),
+		runtimeadapter.WithInstanceMetadataStore(metadata),
+		runtimeadapter.WithInstanceStoreTx(instanceStore),
+	}
 }
 
 func gpuInventoryAdapter(cfg Config, kubeClient *runtimeadapter.KubernetesRESTClient) (ports.GPUInventory, error) {

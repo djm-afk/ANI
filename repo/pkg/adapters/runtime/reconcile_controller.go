@@ -736,11 +736,20 @@ func (c *LocalWorkloadReconcileController) cancelQuota(ctx context.Context, reco
 	})
 }
 
-// releaseQuota releases the confirmed TCC reservation and writes the failed
-// status in one tenant transaction. Used for running -> failed.
+// releaseQuota releases the TCC reservation and writes the failed status in
+// one tenant transaction. Used for running -> failed.
+//
+// When the reservation is still in 'reserved' state (e.g. the pod crashed
+// before selfHealConfirm ran), a plain Release would skip it (WHERE
+// state='confirmed') and leak reserved quota. To prevent this, releaseQuota
+// calls Cancel first (releases reserved) then Release (releases used),
+// matching cancelQuota's double-call approach. Both are idempotent.
 func (c *LocalWorkloadReconcileController) releaseQuota(ctx context.Context, record ports.WorkloadInstanceRecord) error {
 	return c.runQuotaTransition(ctx, record, func(txCtx context.Context, tx ports.MetadataTx) error {
 		if c.quotaService != nil && len(record.QuotaTxIDs) > 0 {
+			if err := c.quotaService.Cancel(txCtx, tx, record.QuotaTxIDs); err != nil {
+				return err
+			}
 			if err := c.quotaService.Release(txCtx, tx, record.QuotaTxIDs); err != nil {
 				return err
 			}

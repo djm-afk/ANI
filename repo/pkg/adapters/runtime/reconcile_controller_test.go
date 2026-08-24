@@ -790,8 +790,10 @@ func TestReconcileCancelOnFailed(t *testing.T) {
 	}
 }
 
-// TestReconcileReleaseOnFailed asserts running -> failed triggers a TCC Release
-// (release used) inside the same tenant transaction.
+// TestReconcileReleaseOnFailed asserts running -> failed triggers a TCC
+// Cancel + Release double-call (release both reserved and used) inside the
+// same tenant transaction. The Cancel handles the case where the reservation
+// was still in 'reserved' state (pod crashed before selfHealConfirm).
 func TestReconcileReleaseOnFailed(t *testing.T) {
 	store := newReconcileMemoryStore()
 	record := newReconcileTestRecordWithQuota(ports.WorkloadStateRunning)
@@ -823,8 +825,11 @@ func TestReconcileReleaseOnFailed(t *testing.T) {
 	if len(quota.releaseCalls) != 1 {
 		t.Fatalf("Release calls = %d, want 1", len(quota.releaseCalls))
 	}
-	if len(quota.confirmCalls) != 0 || len(quota.cancelCalls) != 0 {
-		t.Fatalf("Confirm=%d Cancel=%d, want 0/0", len(quota.confirmCalls), len(quota.cancelCalls))
+	if len(quota.cancelCalls) != 1 {
+		t.Fatalf("Cancel calls = %d, want 1 (Cancel before Release)", len(quota.cancelCalls))
+	}
+	if len(quota.confirmCalls) != 0 {
+		t.Fatalf("Confirm=%d, want 0", len(quota.confirmCalls))
 	}
 	if len(storeTx.txWrites) != 1 || storeTx.txWrites[0].Status.State != ports.WorkloadStateFailed {
 		t.Fatalf("storeTx writes = %+v, want one failed write", storeTx.txWrites)

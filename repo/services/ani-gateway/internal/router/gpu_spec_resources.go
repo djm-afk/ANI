@@ -246,10 +246,14 @@ func (api *gpuSpecAPI) specInUse(ctx context.Context, specID string) bool {
 				  AND (gpu_status->>'SpecID' = $1 OR compute_summary->>'SpecID' = $1)
 			`, specID).Scan(&count)
 		})
-		if err != nil || count > 0 {
-			return count > 0
+		if err != nil {
+			slog.Error("gpu spec in-use check failed, fail-closed to prevent deleting a referenced spec",
+				"spec_id", specID,
+				"err", err,
+			)
+			return true
 		}
-		return false
+		return count > 0
 	}
 	slog.Warn("gpu spec in-use check skipped: metadataStore not configured, cannot perform cross-tenant check",
 		"spec_id", specID,
