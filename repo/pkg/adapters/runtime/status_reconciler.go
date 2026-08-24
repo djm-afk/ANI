@@ -41,16 +41,12 @@ func (r *LocalStatusReconciler) Reconcile(_ context.Context, request ports.Workl
 		return ports.WorkloadReconcileResult{}, err
 	}
 
-	// Terminal-state guard: failed is terminal. A pod that was in
-	// CrashLoopBackOff (mapped to failed) may later self-heal and report
-	// phase "running", but the TCC reservation has already been released
-	// (running→failed invoked Release). Re-confirming is impossible because
-	// the reservation SQL WHERE clause requires state='reserved'. Allowing
-	// the reconciler to flip failed→running would leave the instance running
-	// with used quota never decremented back — a quota leak. Block the
-	// transition and keep the failed state; the user must delete and
-	// recreate the instance to get a fresh TCC Try→Confirm cycle.
-	if request.Current.State == ports.WorkloadStateFailed && nextState != ports.WorkloadStateFailed {
+	// Terminal-state guard: failed is terminal, but a pod that was in
+	// CrashLoopBackOff (mapped to failed) may self-heal and report phase
+	// "running". Allow failed→running so applyStateTransition can re-acquire
+	// quota via a fresh TryManyTx (retryQuota). Block other failed→* transitions
+	// (e.g. failed→provisioning) which have no meaningful TCC action.
+	if request.Current.State == ports.WorkloadStateFailed && nextState != ports.WorkloadStateFailed && nextState != ports.WorkloadStateRunning {
 		return ports.WorkloadReconcileResult{
 			Status:       request.Current,
 			Changed:      false,

@@ -318,6 +318,8 @@ func (c *LocalWorkloadReconcileController) applyStateTransition(ctx context.Cont
 		return c.cancelQuota(ctx, record)
 	case previous == ports.WorkloadStateRunning && next == ports.WorkloadStateFailed:
 		return c.releaseQuota(ctx, record)
+	case previous == ports.WorkloadStateFailed && next == ports.WorkloadStateRunning:
+		return c.retryQuota(ctx, record)
 	case previous == ports.WorkloadStateDeleting && next == ports.WorkloadStateDeleted:
 		return c.CancelQuotaAndFinalize(ctx, record)
 	default:
@@ -744,6 +746,49 @@ func (c *LocalWorkloadReconcileController) releaseQuota(ctx context.Context, rec
 			}
 		}
 		if err := c.writeOutbox(txCtx, tx, "instance.released", record); err != nil {
+			return err
+		}
+		return c.storeTx.UpsertStatusTx(txCtx, tx, record)
+	})
+}
+
+// retryQuota re-acquires quota for a failed→running transition. When the
+// instance went running→failed the TCC reservation was released; if the pod
+// self-heals (CrashLoopBackOff→Running) the reconciler observes failed→running.
+// A fresh TryManyTx is needed so the reconciler can later Confirm the new
+// reservation (reserved→used). The new QuotaTxIDs are written to the instance
+// record in the same transaction. TryManyTx's SQL guard prevents oversell.
+func (c *LocalWorkloadReconcileController) retryQuota(ctx context.Context, record ports.WorkloadInstanceRecord) error {
+	slog.Info("retryQuota called",
+		"instance_id", record.InstanceID,
+		"quota_tx_ids", record.QuotaTxIDs,
+		"quota_service_nil", c.quotaService == nil,
+	)
+	return c.runQuotaTransition(ctx, record, func(txCtx context.Context, tx ports.MetadataTx) error {
+		if c.quotaService != nil {
+			gpuCount := 1
+			if record.GPU != nil && record.GPU.Count > 0 {
+				gpuCount = record.GPU.Count
+			}
+			reservations, err := c.quotaService.TryManyTx(txCtx, tx, []ports.QuotaTryRequest{{
+				TenantID:     record.TenantID,
+				ResourceType: ports.QuotaGPUCount,
+				Amount:       int64(gpuCount),
+			}})
+			if err != nil {
+				slog.Error("retryQuota TryManyTx failed",
+					"instance_id", record.InstanceID,
+					"err", err,
+				)
+				return err
+			}
+			record.QuotaTxIDs = reservationTxIDs(reservations)
+			slog.Info("retryQuota TryManyTx succeeded",
+				"instance_id", record.InstanceID,
+				"new_quota_tx_ids", record.QuotaTxIDs,
+			)
+		}
+		if err := c.writeOutbox(txCtx, tx, "instance.retried", record); err != nil {
 			return err
 		}
 		return c.storeTx.UpsertStatusTx(txCtx, tx, record)

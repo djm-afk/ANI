@@ -413,13 +413,6 @@ func transition(state ports.WorkloadState, action ports.WorkloadLifecycleAction)
 		if state == ports.WorkloadStateDeleted || state == ports.WorkloadStateDeleting {
 			return "", fmt.Errorf("%w: cannot start deleted instance", ports.ErrConflict)
 		}
-		// failed is terminal: the TCC reservation was released when the
-		// instance transitioned running→failed. Starting a failed instance
-		// would leave it running without quota (used not re-decremented).
-		// The user must delete and recreate to get a fresh TCC Try→Confirm.
-		if state == ports.WorkloadStateFailed {
-			return "", fmt.Errorf("%w: cannot start failed instance; delete and recreate instead", ports.ErrConflict)
-		}
 		return ports.WorkloadStateRunning, nil
 	case ports.WorkloadLifecycleStop:
 		if state == ports.WorkloadStateDeleted || state == ports.WorkloadStateDeleting {
@@ -473,12 +466,6 @@ func transition(state ports.WorkloadState, action ports.WorkloadLifecycleAction)
 	case ports.WorkloadLifecycleRollback:
 		if state == ports.WorkloadStateDeleted || state == ports.WorkloadStateDeleting {
 			return "", fmt.Errorf("%w: cannot rollback deleted instance", ports.ErrConflict)
-		}
-		// failed is terminal: same rationale as Start — the TCC reservation
-		// was released on running→failed. Rollback to running would bypass
-		// quota re-deduction.
-		if state == ports.WorkloadStateFailed {
-			return "", fmt.Errorf("%w: cannot rollback failed instance; delete and recreate instead", ports.ErrConflict)
 		}
 		return ports.WorkloadStateRunning, nil
 	case ports.WorkloadLifecycleCreate:
