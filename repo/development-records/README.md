@@ -13,6 +13,12 @@
 
 ## 已完成批次（按完成时间排列）
 
+### 任务中心异步任务 Core 集成（2026-08，分支 feat/async-task-core-integration）
+
+| 批次 | 内容摘要 | 文件 |
+|---|---|---|
+| TASKCENTER-C1 | 契约批次：AsyncTask enum 扩展 5 种 `instance.*` + `instance` resource_type + 存量缺口 `sandbox.checkpoint.restore`；AsyncTask description 写入真进度语义（running 起步 / GET 单查懒同步 / 状态阶梯 / list 快照）与实例 state→任务映射表；新增 `GET /tasks`（cursor 分页/筛选/authz/401/403）与 `TaskListResponse`；`GET /tasks/{task_id}` 补 operationId/security/authz/rbac scope/401/403；鉴权注册表两条 tasks 路由翻转为 generated（pilot 集合未扩，运行时零变化）；Core SDK/静态 docs/Console schema 生成物同步；Core API v1 兼容基线有意再生成。纯契约，不含 handler 实现 | TASKCENTER-C1.md |
+
 ### Gateway OpenAPI 鉴权四批次（2026-08）
 
 | 批次 | 内容摘要 | 文件 |

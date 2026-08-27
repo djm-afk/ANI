@@ -1825,11 +1825,19 @@
         </tr>
         <tr>
           <td><span class="method method-get">GET</span></td>
+          <td><code>/tasks</code></td>
+          <td><code>listAsyncTasks</code></td>
+          <td>列出当前租户的异步任务</td>
+          <td><code>scope:tasks:read</code></td>
+          <td>200, 400, 401, 403</td>
+        </tr>
+        <tr>
+          <td><span class="method method-get">GET</span></td>
           <td><code>/tasks/{task_id}</code></td>
-          <td><code>getTasksTaskId</code></td>
-          <td>查询异步任务状态</td>
-          <td><code></code></td>
-          <td>200, 404</td>
+          <td><code>getTask</code></td>
+          <td>查询单个异步任务</td>
+          <td><code>scope:tasks:read</code></td>
+          <td>200, 401, 403, 404</td>
         </tr>
         <tr>
           <td><span class="method method-get">GET</span></td>
@@ -2310,6 +2318,7 @@
         <li><code>StorageVolumeMountHistoryEntry</code></li>
         <li><code>StorageVolumeMountRequest</code></li>
         <li><code>StorageVolumeUnmountRequest</code></li>
+        <li><code>TaskListResponse</code></li>
         <li><code>Tenant</code></li>
         <li><code>TenantPlanUpdateRequest</code></li>
         <li><code>TenantSummary</code></li>
