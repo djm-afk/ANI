@@ -75,7 +75,6 @@ func RegisterWithOptions(h *server.Hertz, options RegisterOptions) {
 
 	v1 := h.Group("/api/v1")
 	registerBranding(v1)
-	registerTasksWithStore(v1, options.AsyncTaskStore)
 	registerAuth(v1)
 	registerMetering(v1)
 	registerHarbor(v1, options.ImageRegistry)
@@ -85,7 +84,10 @@ func RegisterWithOptions(h *server.Hertz, options RegisterOptions) {
 	if options.InstanceRuntime != nil && options.InstanceRuntime.TaskStore == nil {
 		options.InstanceRuntime.TaskStore = options.AsyncTaskStore
 	}
-	instanceLookup := registerInstancesWithRuntime(v1, options.InstanceObservability, options.InstanceObservabilityUsesInstanceName, options.GPUInventory, options.KubernetesRESTClient, options.SecretService, options.InstanceRuntime, options.GPUSpecStore)
+	instanceLookup, observeInstance := registerInstancesWithRuntime(v1, options.InstanceObservability, options.InstanceObservabilityUsesInstanceName, options.GPUInventory, options.KubernetesRESTClient, options.SecretService, options.InstanceRuntime, options.GPUSpecStore)
+	// Tasks register after instances so the lazy-sync observer (store read +
+	// single-instance Kubernetes refresh) is available for GET /tasks/{id}.
+	registerTasksWithStore(v1, options.AsyncTaskStore, observeInstance)
 	if promSvc, ok := options.ObservabilityService.(*runtimeadapter.PrometheusObservabilityService); ok {
 		promSvc.SetInstanceLookup(instanceLookup)
 	}
