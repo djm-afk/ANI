@@ -4,7 +4,7 @@
 对应 Sprint：Sprint 13（并行功能流：任务中心异步任务 Core 集成）
 分支：`feat/async-task-core-integration`
 方案依据：仓库根目录 `async-task-core-integration-migration.md`（§6 阶段 B / §8.2 / §8.3）
-验证结果：`make test` 等价拆解全通（go test 全包 + go vet；router 包含 29 个新测试全绿）；`make validate-architecture` 通过（component import guard + inference legacy control plane）；`make validate-services` 等价拆解通过（services boundary / services yaml / inference control-plane migration / services contract / services route contract / spec-split 含 Go 测试 / sdk-beta / gen_sdk_alpha + generate_api_docs 生成物零漂移 / doc-api / doc-entrypoints / rag compileall / Console schema 零漂移）；`validate-async-task-store` 通过；`git diff --check` 通过。真实 PG 验证：连接成功，`20260827_001` 索引迁移 SQL 成功应用并确认存量索引确缺 `(tenant_id, created_at DESC, id DESC)`；RLS 跨租户拦截无法用给定凭据验证（dev 库 `ani` 账号为 SUPERUSER + BYPASSRLS + 表 owner，RLS 被绕过），隔离正确性由 `LocalAsyncTaskStore` 租户键隔离测试与 SQL `WHERE tenant_id` 双层保证。本地 Windows 存量失败：`pkg/adapters/runtime` 两个 sandbox file script 测试（symlink 特权 + `os.O_DIRECTORY` 缺失）与 `validate_sdk_alpha` 的 javac 编译（本机仅 JDK 1.8 编译器，`java.net.http` 需 11+），均已在 C1 期 pristine HEAD 复现确认与基线一致，非本批引入。
+验证结果：`make test` 等价拆解全通（go test 全包 + go vet；store + router 共 30 个新测试全绿：store 9 + router 21）；`make validate-architecture` 通过（component import guard + inference legacy control plane）；`make validate-services` 等价拆解通过（services boundary / services yaml / inference control-plane migration / services contract / services route contract / spec-split 含 Go 测试 / sdk-beta / gen_sdk_alpha + generate_api_docs 生成物零漂移 / doc-api / doc-entrypoints / rag compileall / Console schema 零漂移）；`validate-async-task-store` 通过；`git diff --check` 通过。真实 PG 验证：连接成功，`20260827_001` 索引迁移 SQL 成功应用并确认存量索引确缺 `(tenant_id, created_at DESC, id DESC)`；RLS 跨租户拦截无法用给定凭据验证（dev 库 `ani` 账号为 SUPERUSER + BYPASSRLS + 表 owner，RLS 被绕过），隔离正确性由 `LocalAsyncTaskStore` 租户键隔离测试与 SQL `WHERE tenant_id` 双层保证。本地 Windows 存量失败：`pkg/adapters/runtime` 两个 sandbox file script 测试（symlink 特权 + `os.O_DIRECTORY` 缺失）与 `validate_sdk_alpha` 的 javac 编译（本机仅 JDK 1.8 编译器，`java.net.http` 需 11+），均已在 C1 期 pristine HEAD 复现确认与基线一致，非本批引入。
 
 ## 实现了什么
 
@@ -24,7 +24,7 @@ Core 任务中心异步任务集成的实现批次（TASKCENTER-C1 契约的 han
 | `services/ani-gateway/internal/router/{instances,storage_resources,vector_store_resources}_test.go` | 修改 | `registerInstancesWithRuntime`/`registerTasksWithStore` 签名适配（观察闭包返回值/nil observer） |
 | `services/docs/console-modules/alerts/async-task-center.md` | 修改 | 页面文档同步：list 已冻结实现、懒同步边界、kb 域噪声声明、`scope:tasks:read` 权限行、接口冻结规则补 400、延后方案引用 |
 | `pkg/adapters/runtime/async_task_list_test.go` | 新增 | store 层 9 测试：排序/翻页/筛选/非法入参/租户隔离/Update 终态守卫（Local）；keyset SQL 断言/limit+1 探测/守卫 SQL + 重读（Metadata fake tx） |
-| `services/ani-gateway/internal/router/task_resources_test.go` | 新增 | Gateway 层 20 测试：HTTP list 边界/跨租户/写入点/幂等重放/409 补写/懒同步映射表逐行/自带刷新/降级/写放大抑制/并发乱序守卫/orphan 重试写入/字段完整性/模式 B + kb 域不变 |
+| `services/ani-gateway/internal/router/task_resources_test.go` | 新增 | Gateway 层 21 测试：HTTP list 边界/跨租户/写入点/幂等重放/409 补写/懒同步映射表逐行/自带刷新/懒同步降级/任务库不可用降级（§8.3）/写放大抑制/并发乱序守卫/orphan 重试写入/字段完整性/模式 B + kb 域不变 |
 
 ## 完工标准达成（对照方案 §8.2 / §8.3）
 
@@ -41,7 +41,7 @@ Core 任务中心异步任务集成的实现批次（TASKCENTER-C1 契约的 han
 - [x] 响应字段完整性：GET/list items 含 `error_message`/`resource_id`/`dead_letter_at`，failed 任务 error_message 非空（`TestTaskResponseFieldsComplete`）
 - [x] 既有模式 B 任务可见性：storage/vector/platform/sandbox 任务 list 正常返回字段完整且不受懒同步影响（`TestTaskListReturnsModeBAndKbDomainTasksUnchanged`）
 - [x] kb 域预期任务：`kb.parse` pending 记录 list 返回且状态不变、CreateKB completed 正常返回（同上测试）
-- [x] 幂等与隔离（§8.3）：同 idempotency_key 不产生重复（ON CONFLICT/内存幂等）；实例库与任务库键空间互不干扰（create 重放走实例库幂等）
+- [x] 幂等与隔离（§8.3）：同 idempotency_key 不产生重复（ON CONFLICT/内存幂等）；实例库与任务库键空间互不干扰（create 重放走实例库幂等）；任务库不可用时实例主响应不受影响、降级旁路（`TestInstanceTaskStoreUnavailableKeepsInstanceResponse`）
 - [x] 实例 API 响应契约不变（不 202 化，forbidden 字段断言）；不做取消契约；不建 worker/outbox/后台协程；不扩 22 种 lifecycle task_type；list 不做懒同步；无 Services 层改动（方案 §7.2 全部遵守）
 
 ## 备注（与方案的偏差，详见差异文档 `implementation-diff-async-task.md`）
@@ -52,6 +52,7 @@ Core 任务中心异步任务集成的实现批次（TASKCENTER-C1 契约的 han
 4. **测试修复过程中的 3 处自愈**：`failingCreateStore` 增加可恢复开关（模拟 store 故障→恢复）、重放测试的 fingerprint 一致性（body name 必须与首次一致否则重放被拒）、failed 映射测试的实例状态重置（stop 后 restart 要求 running）。均属测试造数问题，非产品代码缺陷。
 5. **真实验证发现（非缺陷，如实记录）**：dev PG 的 `ani` 账号为 SUPERUSER + BYPASSRLS + 表 owner，RLS（FORCE ROW LEVEL SECURITY + tenant 策略）对该会话不生效；跨租户 RLS 拦截无法用给定凭据验证。应用层隔离由 `WHERE tenant_id` 显式过滤 + Local store 键隔离测试保证。
 6. **本机环境限制**（与 C1 一致）：sandbox symlink 两个存量测试、javac 1.8 编译 SDK（`validate_sdk_alpha`）均失败于 Windows 本机限制，pristine HEAD 已复现确认。
+7. **计数勘误（2026-08-28 复核）**：初版"router 包含 29 个新测试"/"Gateway 层 20 测试"均为少计，实际新增 30 个（store 9 + Gateway 21）；提交消息 `5d27599` 中的"29 个新测试"同样少计 1 个（漏数 `TestInstanceTaskStoreUnavailableKeepsInstanceResponse`）。本文与差异文档已修正，提交消息不改写。
 
 ## 后续
 
