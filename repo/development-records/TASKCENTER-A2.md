@@ -61,4 +61,3 @@
 2. **跨表遗留（不在本批范围，如实记录）**：`WithTenantTx` 的 `set_config(..., is_local)` 事务后空串残留是 `MetadataStore` 连接池的全局行为；workload\_instances / resource\_quota 等表的 `platform_bypass` 策略仍是裸 `IS NULL` 形态（20260825\_001 模式），"同连接先租户事务后平台事务"的 `WithPlatformTx` 查询（如 specInUse COUNT）会 0 行假阴性。建议后续批次统一把存量表 platform\_bypass 升级为 NULLIF 形态或在 `WithPlatformTx` 入口显式清理会话变量。
 3. **探察残留行**：验证期动态 UUID 探察在 dev 库留下数行 `rls-at-probe-*` 前缀测试行（应用角色无 DELETE 权限无法清理，可识别、无业务影响）；正式测试改用固定 UUID + 固定幂等键后不再累积。
 4. **本机环境限制**（与 C1/A1 一致）：sandbox symlink 两个存量测试失败于 Windows 限制，pristine HEAD 已复现确认与基线一致。
-
