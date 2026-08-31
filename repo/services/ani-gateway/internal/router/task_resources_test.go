@@ -363,7 +363,7 @@ func TestInstanceLifecycleActionsWriteTasks(t *testing.T) {
 	}
 	// A rejected lifecycle (deleted instance cannot stop) answers 409 and
 	// must not add a task row: the write point runs after error checks.
-	rejectBody := fmt.Sprintf(`{"action":"stop","idempotency_key":"task-lifecycle-extra-stop"}`)
+	rejectBody := `{"action":"stop","idempotency_key":"task-lifecycle-extra-stop"}`
 	performJSONRequest(t, harness.h, http.MethodPost, "/api/v1/instances/"+instanceID+"/lifecycle", rejectBody, http.StatusConflict)
 	records, _, _ := harness.tasks.List(context.Background(), harness.tenantID, ports.AsyncTaskListFilter{Limit: 100})
 	if len(records) != 5 { // create + stop + start + restart + delete
@@ -419,7 +419,7 @@ func TestInstanceCreateReplayRepairsMissingTaskRecord(t *testing.T) {
 	// match the Phase 1 fingerprint (same name) or the replay is rejected
 	// as a different intent before reaching the write point.
 	flaky.fail.Store(false)
-	body := fmt.Sprintf(`{"kind":"gpu_container","name":"gpu-task-repair-key","idempotency_key":"task-repair-key","cpu":"2","memory":"4Gi"}`)
+	body := `{"kind":"gpu_container","name":"gpu-task-repair-key","idempotency_key":"task-repair-key","cpu":"2","memory":"4Gi"}`
 	performJSONRequest(t, harness.h, http.MethodPost, "/api/v1/instances", body, http.StatusConflict)
 	record := harness.singleTaskByType(t, "instance.create")
 	if record.Status != "running" || record.Result["instance_id"] != instanceID {
@@ -646,12 +646,12 @@ func newFakeK8sClient(t *testing.T, deployments map[string]string) (*runtimeadap
 		response := fmt.Sprintf(`{"metadata":{"name":%q,"creationTimestamp":"2026-01-01T00:00:00Z"},"spec":{"template":{"spec":{"containers":[{"resources":{"limits":{}}}]}}},"status":{"replicas":%d,"readyReplicas":%d,"availableReplicas":%d}}`, name, replicas, ready, ready)
 		mux.HandleFunc("/apis/apps/v1/namespaces/", func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			fmt.Fprint(w, response)
+			_, _ = fmt.Fprint(w, response)
 		})
 	}
 	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
-		fmt.Fprint(w, `{"items":[]}`)
+		_, _ = fmt.Fprint(w, `{"items":[]}`)
 	})
 	client, err := runtimeadapter.NewKubernetesRESTClient(runtimeadapter.KubernetesRESTClientConfig{
 		Host:       srv.URL,
@@ -937,11 +937,11 @@ func newFakeK8sOrphanServer(t *testing.T, deploymentName string) (*runtimeadapte
 		w.Header().Set("Content-Type", "application/json")
 		switch {
 		case strings.HasSuffix(r.URL.Path, "/deployments"):
-			fmt.Fprintf(w, `{"items":[{"metadata":{"name":%q,"creationTimestamp":"2026-01-01T00:00:00Z"}}]}`, deploymentName)
+			_, _ = fmt.Fprintf(w, `{"items":[{"metadata":{"name":%q,"creationTimestamp":"2026-01-01T00:00:00Z"}}]}`, deploymentName)
 		case strings.Contains(r.URL.Path, "/deployments/"+deploymentName):
-			fmt.Fprintf(w, `{"metadata":{"name":%q,"creationTimestamp":"2026-01-01T00:00:00Z"},"spec":{"template":{"spec":{"containers":[{"resources":{"limits":{}}}]}}},"status":{"replicas":1,"readyReplicas":1,"availableReplicas":1}}`, deploymentName)
+			_, _ = fmt.Fprintf(w, `{"metadata":{"name":%q,"creationTimestamp":"2026-01-01T00:00:00Z"},"spec":{"template":{"spec":{"containers":[{"resources":{"limits":{}}}]}}},"status":{"replicas":1,"readyReplicas":1,"availableReplicas":1}}`, deploymentName)
 		default:
-			fmt.Fprint(w, `{"items":[]}`)
+			_, _ = fmt.Fprint(w, `{"items":[]}`)
 		}
 	}))
 	client, err := runtimeadapter.NewKubernetesRESTClient(runtimeadapter.KubernetesRESTClientConfig{
