@@ -1253,10 +1253,16 @@
       "scope": "scope:secrets:bind"
     },
     {
-      "operationId": "getTasksTaskId",
+      "operationId": "listAsyncTasks",
+      "method": "GET",
+      "path": "/tasks",
+      "scope": "scope:tasks:read"
+    },
+    {
+      "operationId": "getTask",
       "method": "GET",
       "path": "/tasks/{task_id}",
-      "scope": ""
+      "scope": "scope:tasks:read"
     },
     {
       "operationId": "listVectorStores",
@@ -1684,6 +1690,7 @@
     "StorageVolumeMountHistoryEntry",
     "StorageVolumeMountRequest",
     "StorageVolumeUnmountRequest",
+    "TaskListResponse",
     "Tenant",
     "TenantPlanUpdateRequest",
     "TenantSummary",
@@ -1832,6 +1839,7 @@
     "listRegistryArtifacts",
     "listSandboxTemplates",
     "listSecrets",
+    "listAsyncTasks",
     "listVectorStores",
     "listStorageVolumes",
     "listVolumeSnapshots"
