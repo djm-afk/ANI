@@ -1270,6 +1270,18 @@ var generatedCorePolicies = map[string]Policy{
 		PathTemplate:         "/api/v1/observability/query_range",
 		SecurityAlternatives: []SecurityRequirement{{AllOf: []OpenAPISecurityScheme{OpenAPISecurityBearer}}, {AllOf: []OpenAPISecurityScheme{OpenAPISecurityAPIKey}}},
 	},
+	"GET /api/v1/observability/resource_trend": {
+		Source:               PolicySourceGenerated,
+		OperationID:          "queryResourceTrendObservability",
+		Method:               "GET",
+		PathTemplate:         "/api/v1/observability/resource_trend",
+		SecurityAlternatives: []SecurityRequirement{{AllOf: []OpenAPISecurityScheme{OpenAPISecurityBearer}}, {AllOf: []OpenAPISecurityScheme{OpenAPISecurityAPIKey}}},
+		Version:              "v1",
+		Resource:             "observability",
+		Action:               "read",
+		Boundary:             BoundaryTenant,
+		PrincipalKinds:       []PrincipalKind{PrincipalUser, PrincipalAPIKey},
+	},
 	"GET /api/v1/platform-workload-capabilities": {
 		Source:               PolicySourceLegacy,
 		OperationID:          "getPlatformWorkloadCapabilities",

@@ -23,6 +23,11 @@
 | 批次 | 内容摘要 | 文件 |
 |---|---|---|
 | VM-CLOUDINIT-PASSWORD-A | `password_secret_ref` 接线到 `cloudInitNoCloud.secretRef`（原只解析未接线，设不了密码）：渲染层拆 `vmCloudInitEnabled`（disks `cloudinitdisk` 条件纳入 `PasswordSecret`）+ `vmCloudInitVolume` 二选一 secretRef；Gateway `validateCreateInstanceConfigs` 加 `cloud_init_secret` 与 `password_secret_ref` 互斥（400）；resolver `resolveSecrets` 对 cloud-init secret 校验 `userdata` 键存在（缺键 `ErrConflict`）；OpenAPI 补 `cloud_init_secret` 声明 + 澄清 `password_secret_ref`；core-schema.d.ts 重生成。local verified（go test 5/5 + gateway 全过 + validate-architecture + git diff --check）；live gate 第三条路径待真实集群执行 | vm-cloudinit-password-a.md |
+### 首页租户级资源趋势接口（2026-09-02，分支 feat/observability-resource-trend）
+
+| 批次 | 内容摘要 | 文件 |
+|---|---|---|
+| OBS-RESOURCE-TREND-A | Core 新增 `GET /observability/resource_trend` 租户级资源使用率趋势接口：不复用 query_range 裸透传（跨租户泄露），tenant_id 全从 JWT 取、后端直接生成只锚 `namespace="ani-tenant-<id>"` 的聚合 PromQL 走 queryPrometheusRange、不暴露 query PromQL；三张租户级 PromQL（GPU DCGM_FI_DEV_GPU_UTIL 不乘 100；CPU/内存 cAdvisor 容器维度 `100*avg` 且过滤 pause 容器）；OpenAPI 新 path + x-ani-authz（observability/read/tenant）生成物同步（Core SDK + authz registry 零漂移）；router resourceTrend handler（metric 枚举/RFC3339/step 正数/instanceTenantID）；local 空 matrix 降级；单测覆盖 PromQL 生成、GPU 不乘100、租户隔离、参数校验、忽略前端租户参数、拒绝 query 透传。in-cluster gateway 实测：三 metric matrix、参数校验 400、无凭证 401。不标记 runtime ready | OBS-RESOURCE-TREND-A.md |
 
 ### 实例日志流式输出（2026-09，分支 feat/instance-log-stream）
 
