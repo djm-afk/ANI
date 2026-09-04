@@ -111,6 +111,8 @@
 
 > **INSTANCE-NETWORK-STORE-READ-RLS-A（2026-08-27~09-01）：** live passed（K8s 测试环境 10.10.1.66）。GPU 容器实例创建引用 VPC NOT_FOUND 的三层根因修复：`NetworkResourceStore` 补读方法 + `LocalNetworkService` 穿透读 + Gateway 注入 store；迁移 `20260828_001` 修复实例链路 8 张表 RESTRICTIVE-only RLS；`WORKLOAD_PROVIDER_APPLY_ENABLED=true` 接线。验证止于实例 201 → provisioning → Volcano 排队（GPU 容量问题非代码）；不外推 GPU runtime ready / production ready。批次记录见 [`development-records/instance-network-store-read-rls-a.md`](development-records/instance-network-store-read-rls-a.md)。
 
+> **INSTANCE-RESIZE-SPEC-A（2026-09-02，live gate 补验 2026-09-03）：** live passed（10.10.1.66，镜像 dev-20260902-resize-ns，hotfix/network-store-read）。`resize` 从"纯重启"改为真正变配：`InstanceLifecycleRequest` 新增可选 `spec_id`（换 GPU 规格，v1 兼容）；状态机 resize 仅允许 stopped（running 409）；cpu/memory/spec_id 至少一项；`resolveResizeGPUSpec` 前置校验（GPUSpecService + GPUInventory，不可用 409）；executor 注入 Volcano translator，resize 走 targeted strategic-merge patch（方案B）：`volcano.sh/vgpu-*`、schedulerName=volcano、queue 注解、nodeSelector，切换 wholecard/vgpu 清另一模式资源键；变配后回写 `record.Compute.SpecID/GPUType/GPUShares/GPUMBPerShare`。新增 5 个 executor spec_id 用例；`go test` + `make validate-architecture` + `git diff --check` 通过。真实集群双向规格切换（quarter↔wholecard）live gate 通过，live 发现并修复 nodeSelector 残留（`$patch: replace`），不外推 GPU runtime ready。批次记录见 [`development-records/instance-resize-spec-a.md`](development-records/instance-resize-spec-a.md)。
+
 ## 当前冲刺
 
 | 字段 | 值 |
@@ -519,6 +521,33 @@ git diff --check
 ### 热修复：实例运行时信息回填（INSTANCE-RUNTIME-HYDRATE-A，2026-09-01）
 
 > 前端反馈 GPU 容器实例列表/详情缺节点、私网 IP、访问端点、终端。Gateway `instances.go` 修复：节点字段错位（`refreshOneStoreStatus` 补回填 `Compute.NodeName`）、从 Pod 回读 PodIP 填 `Network.PrivateIP`/`Endpoint`/`Endpoints`、运行态 container/gpu_container 置 `Access.ExecAvailable=true`；`get` 详情处理器接入 `refreshOneStoreStatus`。已在 10.10.1.66 live passed（镜像 `ani-gateway:dev-20260901`）：运行中 GPU 容器实例 `test-gpu-inst-create` 列表/详情一致回填 dev-phys-02 / 10.60.0.3 / exec_available=true；`go test ./services/ani-gateway/...` + `make validate-architecture` 通过。批次详情见 `repo/development-records/instance-runtime-hydrate-a.md`。
+
+### 热修复：存储挂载重启后 store 回落（INSTANCE-STORAGE-MOUNT-STORE-A，2026-09-02）
+
+> 网关重启后实例创建挂载卷/文件系统报 `mount volume "...": capability resource not found`。根因：解析阶段 `GetVolume/GetFilesystem` 优先读 DB store，挂载阶段 `MountVolume/MountFilesystem/UnmountVolume/UnmountFilesystem` 只查进程内存 map，重启后内存清空导致两阶段数据源不一致。修复：新增 `lookupVolumeRecord/lookupFilesystemRecord`（内存优先、miss 回落 store 并回填）与 `hydrateFilesystemMountTargets`（挂载前从 store 恢复 mount target），四个 mount/unmount 方法全部接入；回归测试复现重启场景。已在 10.10.1.66 live passed（镜像 `ani-gateway:dev-20260902-mount-store`）：rollout 后新 idempotency_key 创建挂载卷实例 201（provisioning，`storage_attachments` resolved，resource_refs 产出）。已知边界：租户 PVC 卡 `pending`（后端未绑定）属独立排查项，文件系统 Available 挂载门禁维持不变。批次详情见 `repo/development-records/instance-storage-mount-store-a.md`。
+
+### 热修复：存储 pending re-observe 与 WFFC 挂载放行（INSTANCE-STORAGE-REOBSERVE-A，2026-09-03）
+
+> 承接 INSTANCE-STORAGE-MOUNT-STORE-A 的遗留排查项（租户 PVC 卡 pending）。根因三层：① 存储状态只在创建 apply 后观测一次，WFFC PVC 那一刻必然 Pending 且再无 re-observe 途径（`LocalStorageStatusReconciler` 已实现但无调用方），控制面状态永远停在 pending；② resolver 文件系统门禁要求 Available 与 WFFC 语义死锁（PVC 等第一个消费者、消费者等 Available）；③ `MountFilesystem` 只认 Available mount target，而 provider 模式下 target 因后端 PVC 未绑定停 Creating。修复：`GetVolume`/`GetFilesystem` 对 pending 记录发起 provider re-observe 并 store+内存双写（30s 节流，失败降级 warn）；resolver 放行 Pending 文件系统（挂载即 WFFC 首消费者，Failed/Deleting/Deleted 仍拒）；`MountFilesystem` 放行 Creating target（Pod 经共享 PVC/CSI 挂载而非合成 IP）。排查同时确认集群缺失 `ani-block` StorageClass（helm values 声明但部署规格从未创建），已按 ani-rbd-ssd 参数在集群手工创建使 PVC 绑定，清单落地 `deploy/real-k8s-lab/` 为独立事项。新增 4 个回归测试；`go test` + `go build`（pkg+gateway）+ gofmt 通过。**live 验证通过（2026-09-03，镜像 `dev-20260903-reobserve`）**：挂载 Pending NFS 文件系统的容器实例创建 201（`inst_a60c1092-c55b-4937-bbe7-180826baea35`，real provider），Pod 成为首消费者后 `fs_306220e7` 经 re-observe pending→available；期间排除两个环境干扰（Harbor `ani-purpose-system` 标签误标 rocky:10 触发 ImagePurposeMismatch；另一部署管道在我部署后用 digest镜像 `sha256:72d1af13` 覆盖 gateway 导致旧二进制短暂接管，已恢复并复验——多管道并发部署 gateway 需协调）。批次详情见 `repo/development-records/instance-storage-reobserve-a.md`。
+
+### 热修复：VM cloud-init 用户名密码注入（VM-CLOUDINIT-PASSWORD-A，2026-09-03）
+
+> `password_secret_ref` 在契约里声明但渲染层未接线，设不了 VM 密码。修复（方案 A，见
+> `repo/design/vm-cloudinit-password-fix-plan.md`）：渲染层拆 `vmCloudInitEnabled`（disks
+> `cloudinitdisk` 追加条件纳入 `PasswordSecret`，避免 volume/device 不匹配 VMI 校验失败）+ 
+> `vmCloudInitVolume` 把 `PasswordSecret` 与 `CloudInitSecret` 二选一接线到
+> `cloudInitNoCloud.secretRef`；Gateway `validateCreateInstanceConfigs` 加 `cloud_init_secret`
+> 与 `password_secret_ref` 互斥校验（400，沿用既有映射）；resolver `resolveSecrets` 对 cloud-init
+> secret 校验 `userdata` 键存在（缺键 `ErrConflict`，复用 `Keys` 不新增安全面）；OpenAPI v1.yaml
+> 补 `cloud_init_secret` 声明 + 澄清 `password_secret_ref` 描述，`core-schema.d.ts` 重生成。
+> 新增 3 组测试（renderer PasswordSecret + disks 联动 / resolver 缺键两路径 / gateway 互斥）。
+> `go build` + `go test`（runtime 5/5 + gateway 全过）+ `validate_component_imports.py` +
+> `git diff --check` 通过。**live gate 三条路径已通过**（2026-09-04，真实集群 10.10.1.66，
+> 镜像 `dev-20260904-vm-cloudinit-password-1`）：`user_data` / `cloud_init_secret` /
+> `password_secret_ref` 探针均 `ANI_VM_PASS_STATUS=SET`，evidence 落
+> `repo/development-records/live-evidence/`，live gate YAML 新增
+> `vm-cloudinit-password-secret-ref-password` 检查并置 status: live。批次详情见
+> `repo/development-records/vm-cloudinit-password-a.md`。
 
 ## Instance Observability Completion 增量补全（2026-07，PR4 分支）
 
