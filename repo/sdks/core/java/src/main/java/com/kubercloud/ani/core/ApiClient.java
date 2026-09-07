@@ -747,6 +747,7 @@ public final class ApiClient {
         "StorageBucketObjectEntry",
         "StorageBucketObjectListResponse",
         "StorageBucketRecord",
+        "StorageConsumerInfo",
         "StorageFilesystem",
         "StorageFilesystemExpandRequest",
         "StorageFilesystemListResponse",

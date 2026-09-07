@@ -725,6 +725,7 @@ export const schemas = [
   "StorageBucketObjectEntry",
   "StorageBucketObjectListResponse",
   "StorageBucketRecord",
+  "StorageConsumerInfo",
   "StorageFilesystem",
   "StorageFilesystemExpandRequest",
   "StorageFilesystemListResponse",

@@ -729,6 +729,7 @@ SCHEMAS = [
     "StorageBucketObjectEntry",
     "StorageBucketObjectListResponse",
     "StorageBucketRecord",
+    "StorageConsumerInfo",
     "StorageFilesystem",
     "StorageFilesystemExpandRequest",
     "StorageFilesystemListResponse",
