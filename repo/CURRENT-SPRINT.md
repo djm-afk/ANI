@@ -404,6 +404,37 @@ make validate-doc-entrypoints
 git diff --check
 ```
 
+## BOSS 平台运营账号功能流（2026-09）
+
+> 独立于 Sprint 13/14 real provider 收敛的 BOSS 平台运营账号（platform-admin）后端功能开发流。覆盖 Core `PlatformUserAdminService` + 新建 `platform-settings-service` + Services Gateway `/api/v1/svc/platform-admins/*`。共 11 个后端 Issue（#001–#011），**后端 API 批次本地实现完成**；BOSS 前端（列表/创建向导/详情 Tabs）待后续批次。批次记录归档于 `development-records/platform-admin-issue-*.md`。
+
+| Issue | 描述 | 状态 | 证据 |
+|---|---|---|---|
+| #001 | OpenAPI 契约：Core `/admin/platform-users/*` + Services `/platform-admins/*` | ✅ 已完成 | `development-records/platform-admin-issue-001-openapi-contract.md` |
+| #002 | platform-settings-service 骨架 + gRPC/proto + 审计 store 端口 | ✅ 已完成 | `development-records/platform-admin-issue-002-service-skeleton.md` |
+| #003 | 审计表迁移 + `PlatformAdminAuditStore` postgres adapter | ✅ 已完成 | `development-records/platform-admin-issue-003-database-migration.md` |
+| #004 | Services 网关 platform-admins 路由注册 + Core admin 链路 | ✅ 已完成 | `development-records/platform-admin-issue-004-services-link.md` |
+| #005 | 创建运营账号 API（email 可重复、软删 username 唯一） | ✅ 已完成 | `development-records/platform-admin-issue-005-create-api.md` |
+| #006 | 列表 + 详情 API（游标分页、Core SDK 委托） | ✅ 已完成 | `development-records/platform-admin-issue-006-list-detail-api.md` |
+| #007 | Core 角色列表 + 账号权限矩阵查询 | ✅ 已完成 | `development-records/platform-admin-issue-007-core-platform-roles-api.md` |
+| #008 | 改角色 + last-admin 保护 + 幂等边界（仅外层网关） | ✅ 已完成 | `development-records/platform-admin-issue-008-roles-change-role-api.md` |
+| #009 | 禁用/启用/软删除 + `STATUS_UNCHANGED` | ✅ 已完成 | `development-records/platform-admin-issue-009-disable-enable-delete-api.md` |
+| #010 | 重置密码 + OpenAPI path 修正 + Store 单测 | ✅ 已完成 | `development-records/platform-admin-issue-010-reset-password-api.md` |
+| #011 | 操作历史查询 + 操作者 `user_id` + 测试补强 | ✅ 已完成（本地未提交） | `development-records/platform-admin-issue-011-audit-logs-api.md` |
+
+**当前边界：** #001–#011 后端 API 本地实现与 note-it 已完成；不含 BOSS 前端 Tab、真实 PG live gate、production ready 声明。合入前需全量 `make test` + `make validate-services` + `make validate-architecture`。
+
+验收命令：
+
+```bash
+cd repo
+python scripts/validate_services_route_contract.py
+go test ./services/platform-settings-service/internal/service/... -run "PlatformAdmin|AuditLog|ResetPassword|Disable|Enable|Delete|ChangeRole|Create|List|Get" -count=1
+go test ./services/ani-gateway/internal/router/... -run "PlatformAdmin|AuditLog|ResetPassword|DisableEnable|DeleteFlow|CreateFlow" -count=1
+go test ./services/platform-settings-service/internal/repo/adapters/postgres/... -count=1
+make test
+make validate-services
+```
 ## BOSS 租户管理员功能流（2026-08）
 
 > BOSS 平台租户管理员管理功能开发流，覆盖管理员全生命周期（OpenAPI 契约 → 接口/数据模型 → DB 迁移 → 网关接入 → 13 端点端到端实现 → 多轮 review-it → 文档对齐）。14 个 issue 全部实现完成。批次记录归档于 `development-records/tenant-admin-issue-*.md` 和 `tenant-admin-feature-batch.md`。

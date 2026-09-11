@@ -810,6 +810,22 @@
 | ARCH-ADAPTER-C | 第一批迁移（CacheStore + MessageBus）| arch-adapter-c-first-migration.md |
 | ARCH-ADAPTER-C-2 | pgx/metadata 依赖 bounded_direct 分类 | arch-adapter-c-2-metadata-boundaries.md |
 
+### BOSS 平台运营账号（2026-09）
+
+| 批次 | 内容摘要 | 文件 |
+|---|---|---|
+| PLATFORM-ADMIN-ISSUE-01 | OpenAPI/Services 契约：platform-admins 路径与 schema（#001） | platform-admin-issue-001-openapi-contract.md |
+| PLATFORM-ADMIN-ISSUE-02 | platform-settings-service 骨架 + gRPC/proto（#002） | platform-admin-issue-002-service-skeleton.md |
+| PLATFORM-ADMIN-ISSUE-03 | 审计表迁移 + audit store adapter（#003） | platform-admin-issue-003-database-migration.md |
+| PLATFORM-ADMIN-ISSUE-04 | Services 网关 platform-admins 路由注册（#004） | platform-admin-issue-004-services-link.md |
+| PLATFORM-ADMIN-ISSUE-05 | 创建运营账号 API（#005） | platform-admin-issue-005-create-api.md |
+| PLATFORM-ADMIN-ISSUE-06 | 列表 + 详情 API（#006） | platform-admin-issue-006-list-detail-api.md |
+| PLATFORM-ADMIN-ISSUE-07 | Core 角色列表 + 账号权限查询（#007） | platform-admin-issue-007-core-platform-roles-api.md |
+| PLATFORM-ADMIN-ISSUE-08 | Services 改角色 + last-admin + 幂等边界（#008） | platform-admin-issue-008-roles-change-role-api.md |
+| PLATFORM-ADMIN-ISSUE-09 | 禁用/启用/软删除 + STATUS_UNCHANGED（#009） | platform-admin-issue-009-disable-enable-delete-api.md |
+| PLATFORM-ADMIN-ISSUE-10 | 重置密码 + OpenAPI path 修正 + Store 单测（#010） | platform-admin-issue-010-reset-password-api.md |
+| PLATFORM-ADMIN-ISSUE-11 | 操作历史查询 + 操作者 user_id + 测试补强（#011） | platform-admin-issue-011-audit-logs-api.md |
+
 ### M2 Gateway / Auth（2026-05）
 
 | 批次 | 内容摘要 | 文件 |

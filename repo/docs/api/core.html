@@ -140,8 +140,8 @@
         <dl class="facts">
           <div><dt>Version</dt><dd>1.0.0</dd></div>
           <div><dt>Server</dt><dd><code>https://{host}/api/v1</code></dd></div>
-          <div><dt>Operations</dt><dd>245</dd></div>
-          <div><dt>Schemas</dt><dd>338</dd></div>
+          <div><dt>Operations</dt><dd>247</dd></div>
+          <div><dt>Schemas</dt><dd>341</dd></div>
         </dl>
       </section>
 
@@ -200,6 +200,14 @@
           <td>200, 400, 401, 403, 404, 409</td>
         </tr>
         <tr>
+          <td><span class="method method-get">GET</span></td>
+          <td><code>/admin/platform-users/roles</code></td>
+          <td><code>listPlatformUserRoles</code></td>
+          <td>查询平台内置角色列表</td>
+          <td><code>scope:users:read</code></td>
+          <td>200, 401, 403</td>
+        </tr>
+        <tr>
           <td><span class="method method-delete">DELETE</span></td>
           <td><code>/admin/platform-users/{userId}</code></td>
           <td><code>deletePlatformUser</code></td>
@@ -229,7 +237,15 @@
           <td><code>enablePlatformUser</code></td>
           <td>启用平台运营账号</td>
           <td><code>scope:users:write</code></td>
-          <td>200, 401, 403, 404, 409</td>
+          <td>200, 401, 403, 404, 409, 422</td>
+        </tr>
+        <tr>
+          <td><span class="method method-get">GET</span></td>
+          <td><code>/admin/platform-users/{userId}/permissions</code></td>
+          <td><code>getPlatformUserPermissions</code></td>
+          <td>查询平台运营账号当前角色权限</td>
+          <td><code>scope:users:read</code></td>
+          <td>200, 401, 403, 404</td>
         </tr>
         <tr>
           <td><span class="method method-post">POST</span></td>
@@ -245,7 +261,7 @@
           <td><code>updatePlatformUserRole</code></td>
           <td>修改平台运营账号角色</td>
           <td><code>scope:users:write</code></td>
-          <td>200, 400, 401, 403, 404, 409</td>
+          <td>200, 400, 401, 403, 404, 409, 422</td>
         </tr>
         <tr>
           <td><span class="method method-get">GET</span></td>
@@ -2299,12 +2315,15 @@
         <li><code>PlatformPasswordLoginRequest</code></li>
         <li><code>PlatformRegion</code></li>
         <li><code>PlatformRegionCapacity</code></li>
+        <li><code>PlatformRole</code></li>
+        <li><code>PlatformRoleListResponse</code></li>
         <li><code>PlatformServiceHealthComponent</code></li>
         <li><code>PlatformServiceHealthResponse</code></li>
         <li><code>PlatformUser</code></li>
         <li><code>PlatformUserCreateRequest</code></li>
         <li><code>PlatformUserIdempotentRequest</code></li>
         <li><code>PlatformUserListResponse</code></li>
+        <li><code>PlatformUserPermissionsResponse</code></li>
         <li><code>PlatformUserResetPasswordRequest</code></li>
         <li><code>PlatformUserRoleUpdateRequest</code></li>
         <li><code>PlatformWorkload</code></li>

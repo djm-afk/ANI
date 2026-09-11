@@ -193,6 +193,12 @@ BOSS 租户配额套餐功能流（2026-08，`quota-policy` 批次）：
 - 待修复：issue-009 `BindPlanQuota` 审计失败阻塞成功响应 → 应改为 log warning 不阻塞（与 issue-010/013 对齐）。
 - 执行状态见 `repo/CURRENT-SPRINT.md`「BOSS 租户配额套餐功能流」章节；批次索引见 `repo/development-records/README.md`。
 
+BOSS 平台运营账号功能流（2026-09，`platform-admin` 批次）：
+- 11 个后端 issue 本地实现完成（issue-001 ~ issue-011），覆盖平台运营账号全生命周期后端 API：OpenAPI/Services 契约 → `platform-settings-service` gRPC → 审计 store → Services 网关 → Create/List/Detail/Roles/ChangeRole/Disable/Enable/Delete/ResetPassword/AuditLogs。批次记录归档 `repo/development-records/platform-admin-issue-*.md`。
+- 关键实现：Core `PlatformUserAdminStore`（users/user_roles 直写、bcrypt、last-admin 原子保护）；Services `PlatformAdminService` 经 Core SDK 调 `/admin/platform-users/*` 并 best-effort 写 `audit_logs`（`tenant_id IS NULL`、`resource=platform_user`）；`ListUserAuditLogs` 按 `details.target_id` 查目标账号、响应 `user_id` 为操作者；Services Gateway `platform_admin_resources.go` 注册 10 个 `/svc/platform-admins/*` 端点。
+- 当前边界：后端 API 批次（#001–#011）本地完成且已 note-it；**不含 BOSS 前端**（列表/创建向导/详情 Tabs）；未声称 live / production ready。合入前需 `make test` + `make validate-services` + `make validate-architecture`。
+- 执行状态见 `repo/CURRENT-SPRINT.md`「BOSS 平台运营账号功能流」章节；批次索引见 `repo/development-records/README.md`「BOSS 平台运营账号（2026-09）」分组。
+
 BOSS 租户管理员功能流（2026-08，`tenant-admin` 批次）：
 - 14 个 issue 全量实现完成（issue-001 ~ issue-014），覆盖管理员全生命周期：OpenAPI 契约 → proto/gRPC 接口 → DB 迁移 → ani-gateway 网关接入 → tenant-service service/store/ports 层 → Core SDK HTTP 客户端集成 → 多轮 review-it → 文档对齐。批次记录归档 `repo/development-records/tenant-admin-issue-*.md`、`tenant-admin-feature-batch.md`、`tenant-admin-doc-alignment-batch.md`。
 - 关键实现：Core/Services 边界拆分（`TenantAdminStore` 仅操作 tenant_admin_invitation/audit_logs，`TenantAdminSvcClient` 12 方法经 Core SDK HTTP 调用，`TenantSvcClient` 2 方法）；三个独立迁移文件（`20260821_001` 建表 + token_hash 唯一索引 + RLS、`20260825_001` 部分唯一索引 `uk_tenant_admin_invitation_pending(tenant_id, user_id) WHERE status='inviting'` 替代旧索引、`20260827000200` users 列扩展 display_name + is_deleted + deleted_at）；ListAllTenantAdmins 全量拉取 + 内存合并（Core SDK `ListTenantAdmins` + 本地 Store `ListInvitationFlags`，不 SQL JOIN Core 表）+ BatchGetUsers 三层贯通替代 N+1；邀请竞态防护用 DB 部分唯一索引而非事务；审计统一走 `TenantPlanAuditStore`（audit_logs 按 resource 区分域）；ChangeRole 入参 role_id（UUID），约束非 platform-*、非 tenant-admin；ResetPassword 仅检查已软删除→404，禁用态允许重置；Delete 软删除不改 status；重复 disable/enable 409 `USER_STATE_INVALID`；审计 result 用 `success / failure`，查询条件 `WHERE details->>'target_id'=userId`；幂等键由网关中间件统一处理；测试用 Go subtest 格式。
