@@ -59,6 +59,8 @@
 | 已占用 · 覆盖 N 个租户 | `in_use` · `tenant_count` |
 | 异常 `维护1 · 不可用1` | `maintenance_count` · `unavailable_count`（另 `fault` 为自动检测故障数，可视情况并入异常角标） |
 
+> **零值字段省略**：`maintenance_count` / `unavailable_count` / `tenant_count` / `wholecard_count` / `vgpu_count` 为 0 时响应里**不出现该字段**（omitempty），前端按「缺字段 = 0」处理，不要假定字段总在。
+
 ### 2.2 已预留（额度口径）— `GET /quotas`
 
 无跨租户「预留总额」现成字段，由前端聚合：分页拉取 `GET /quotas?limit=200&cursor=...`，对每租户的 `gpu_reservation.allocated_gpu_count` 求和：
@@ -84,7 +86,9 @@
 
 ## 3. 设备列表 — `GET /gpu-inventory`
 
-查询参数（均可选）：`gpu_type`、`gpu_mode=wholecard|vgpu`、`status=available|in_use|fault|maintenance|unavailable`、`node_name`、`limit`（默认 50，最大 200）、`cursor`（翻页传上一页 `next_cursor`）。
+查询参数（均可选）：`gpu_type`、`gpu_mode=wholecard|vgpu`、`status=available|in_use|fault|maintenance|unavailable`、`node_name`、`limit`（默认 50，最大 200）、`cursor`。
+
+> **分页说明**：`cursor` 参数后端当前忽略，响应 `next_cursor` 恒为 `null`。按 `limit=200` 一次拉全即可（当前集群规模远小于上限）；后续数据量大再做真翻页时契约不变。
 
 响应 `items[]` 字段 → 表格列映射：
 
@@ -159,7 +163,7 @@ Body:   { "shares": 4 }
 
 ## 6. 联动事件 — `GET /gpu-inventory/events`
 
-参数（均可选）：`device_id`、`event_type=status_changed|partition_applied`、`limit`（默认 50，最大 200）、`cursor`。按时间倒序。
+参数（均可选）：`device_id`、`event_type=status_changed|partition_applied`、`limit`（默认 50，最大 200）、`cursor`（后端当前忽略，`next_cursor` 恒为 `null`，按 `limit=200` 拉全即可）。按时间倒序。
 
 ```json
 {
