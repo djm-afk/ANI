@@ -1115,6 +1115,12 @@
       "scope": "scope:observability:read"
     },
     {
+      "operationId": "getConsoleOverview",
+      "method": "GET",
+      "path": "/overview",
+      "scope": "scope:instances:read"
+    },
+    {
       "operationId": "getPlatformWorkloadCapabilities",
       "method": "GET",
       "path": "/platform-workload-capabilities",
@@ -1506,6 +1512,15 @@
     "BucketPrefixCreateRequest",
     "CloneSandboxCheckpointRequest",
     "CompleteOIDCLoginRequest",
+    "ConsoleInferenceServiceOverview",
+    "ConsoleInferenceServiceStatusDistribution",
+    "ConsoleInstanceOverview",
+    "ConsoleInstanceStateDistribution",
+    "ConsoleKnowledgeBaseOverview",
+    "ConsoleKnowledgeBaseStatusDistribution",
+    "ConsoleModelOverview",
+    "ConsoleModelStatusDistribution",
+    "ConsoleOverviewResponse",
     "CoreDevProfileInfo",
     "CreateAPIKeyRequest",
     "CreateAPIKeyResponse",
