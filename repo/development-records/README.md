@@ -13,6 +13,12 @@
 
 ## 已完成批次（按完成时间排列）
 
+### K8s 集群创建修复：vCluster chart 来源切 Harbor OCI（2026-09-18，分支 hotfix/network-store-read）
+
+| 批次 | 内容摘要 | 文件 |
+|---|---|---|
+| M1-K8S-H | 「创建 K8s 集群」真实底座失败三层根因修复：① 网关容器 uid 65532 而镜像 `HOME=/home/ani` 属 root 不可写（`mkdir /home/ani: permission denied`）——pod `securityContext` 加 `fsGroup: 65532` + `ani-gateway-helm-cache` emptyDir 挂 `/home/ani`；② 默认 chart 源 `https://charts.loft.sh` 集群内不可达——chart 改内网 Harbor OCI（`VCLUSTER_CHART_NAME=oci://docker.changqingyun.cn/ani/charts/vcluster`、`VCLUSTER_CHART_REPO=none` 令 provider 省略 `--repo`），并新增 `VCLUSTER_CHART_VERSION` 全链（env → `gatewayK8sClusterRuntimeConfig` → `VClusterHelmProviderConfig.ChartVersion` → `--version`）把版本钉在 `0.34.1`；③ 租户 namespace 绑定 32 个 kube-ovn 私有 VPC 网段（`private`/`natOutgoing=false`、无 `ovn-default`），控制面 Pod 落 `10.60.1.0/24` 无法访问 ClusterIP API（`dial tcp 10.96.0.1:443: i/o timeout`）致 syncer CrashLoop、`vcluster connect --print` 悬挂——`VCLUSTER_HELM_SET_VALUES` 扩展为 CSV，按既有 PlatformWorkload 约定给控制面 Pod 打 `ovn\.kubernetes\.io/logical_switch=ovn-default` + `.../vpc=ovn-cluster` 注解钉回默认 overlay（普通租户 namespace 本就 ovn-default，不受影响）。未改 OpenAPI 契约/生成物、无 DB 迁移。单测新增 `TestVClusterHelmProviderAdapterPinsChartVersionForOCIRepository`。**live 验证 PASS**：Harbor OCI `vcluster:0.34.1` digest `sha256:a23addb2…9139`，网关 Pod 内匿名 pull 成功；ani-test2（镜像 `test2-20260918-vclusteroci`）`POST /api/v1/k8s-clusters` → 201（30.7s）sts 1/1；ani-system（镜像 `fix-20260918-vclusteroci`，由 test2 同产物 retag）→ 201（38.8s）sts 1/1 Ready。文档含「运维落地与新环境复用手册」（Harbor 参数/推送命令/网关 env/换环境复用边界/私有项目退路/版本口径）。遗留：同 ns 孤儿 vcluster release 触发 `there is already a virtual cluster`，ANI 无 K8s 集群删除 API 缺清理入口 | m1-k8s-h-vcluster-chart-source-oci.md |
+
 ### 对象存储后端桶一致性修复（2026-09-17，分支 fix/object-storage-bugs）
 
 | 批次 | 内容摘要 | 文件 |
