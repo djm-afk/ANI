@@ -155,6 +155,34 @@ func (a *VClusterHelmProviderAdapter) UpgradeK8sCluster(ctx context.Context, req
 	}, nil
 }
 
+func (a *VClusterHelmProviderAdapter) DeleteK8sCluster(ctx context.Context, request ports.K8sClusterProviderDeleteRequest) (ports.K8sClusterProviderDeleteResult, error) {
+	if err := validateK8sClusterProviderDeleteRequest(request); err != nil {
+		return ports.K8sClusterProviderDeleteResult{}, err
+	}
+	namespace := tenantNamespace(request.TenantID)
+	releaseName := request.ClusterID
+	if _, err := a.runner.Run(ctx, a.helmBinary, a.helmUninstallArgs(releaseName, namespace)...); err != nil {
+		return ports.K8sClusterProviderDeleteResult{}, fmt.Errorf("uninstall vCluster Helm release: %w", err)
+	}
+	return ports.K8sClusterProviderDeleteResult{
+		Deleted:      true,
+		Provider:     "vcluster",
+		ResourceRefs: []string{"vcluster/HelmRelease/" + releaseName},
+		Reason:       "vCluster Helm release uninstalled",
+		DeletedAt:    a.now().UTC(),
+	}, nil
+}
+
+func (a *VClusterHelmProviderAdapter) helmUninstallArgs(releaseName string, namespace string) []string {
+	return []string{
+		"uninstall",
+		releaseName,
+		"--namespace",
+		namespace,
+		"--ignore-not-found",
+	}
+}
+
 func (a *VClusterHelmProviderAdapter) GetK8sClusterKubeconfig(ctx context.Context, request ports.K8sClusterKubeconfigProviderRequest) (ports.K8sClusterKubeconfigRecord, error) {
 	if err := validateK8sClusterKubeconfigProviderRequest(request); err != nil {
 		return ports.K8sClusterKubeconfigRecord{}, err
@@ -282,6 +310,13 @@ func validateK8sClusterProviderUpgradeRequest(request ports.K8sClusterProviderUp
 	return nil
 }
 
+func validateK8sClusterProviderDeleteRequest(request ports.K8sClusterProviderDeleteRequest) error {
+	if strings.TrimSpace(request.TenantID) == "" || strings.TrimSpace(request.ClusterID) == "" {
+		return fmt.Errorf("%w: tenant_id and cluster_id are required for vCluster delete", ports.ErrInvalid)
+	}
+	return nil
+}
+
 func validateK8sClusterKubeconfigProviderRequest(request ports.K8sClusterKubeconfigProviderRequest) error {
 	if strings.TrimSpace(request.TenantID) == "" || strings.TrimSpace(request.ClusterID) == "" || strings.TrimSpace(request.Name) == "" {
 		return fmt.Errorf("%w: tenant_id, cluster_id and name are required for vCluster kubeconfig", ports.ErrInvalid)
@@ -326,4 +361,5 @@ func (execVClusterHelmRunner) Run(ctx context.Context, binary string, args ...st
 
 var _ ports.K8sClusterProviderApply = (*VClusterHelmProviderAdapter)(nil)
 var _ ports.K8sClusterProviderUpgrade = (*VClusterHelmProviderAdapter)(nil)
+var _ ports.K8sClusterProviderDelete = (*VClusterHelmProviderAdapter)(nil)
 var _ ports.K8sClusterKubeconfigProvider = (*VClusterHelmProviderAdapter)(nil)

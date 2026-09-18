@@ -354,6 +354,37 @@ func TestVClusterHelmProviderAdapterRunsHelmUpgradeForClusterVersion(t *testing.
 	}
 }
 
+func TestVClusterHelmProviderAdapterUninstallsHelmRelease(t *testing.T) {
+	runner := &fakeVClusterHelmRunner{}
+	adapter := NewVClusterHelmProviderAdapter(VClusterHelmProviderConfig{Runner: runner})
+
+	result, err := adapter.DeleteK8sCluster(context.Background(), ports.K8sClusterProviderDeleteRequest{
+		TenantID:  "tenant-a",
+		ClusterID: "k8sclu-provider",
+		Name:      "vc-a",
+	})
+	if err != nil {
+		t.Fatalf("DeleteK8sCluster() error = %v", err)
+	}
+
+	wantArgs := []string{
+		"uninstall",
+		"k8sclu-provider",
+		"--namespace",
+		"ani-tenant-tenant-a",
+		"--ignore-not-found",
+	}
+	if runner.binary != "helm" || !reflect.DeepEqual(runner.args, wantArgs) {
+		t.Fatalf("helm call = %s %#v, want helm %#v", runner.binary, runner.args, wantArgs)
+	}
+	if !result.Deleted || result.Provider != "vcluster" || result.Reason != "vCluster Helm release uninstalled" {
+		t.Fatalf("result = %+v, want uninstalled vcluster provider", result)
+	}
+	if len(result.ResourceRefs) != 1 || result.ResourceRefs[0] != "vcluster/HelmRelease/k8sclu-provider" {
+		t.Fatalf("resource refs = %#v", result.ResourceRefs)
+	}
+}
+
 type fakeVClusterHelmRunner struct {
 	binary         string
 	args           []string

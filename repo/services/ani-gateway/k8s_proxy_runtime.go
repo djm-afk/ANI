@@ -202,7 +202,12 @@ func newGatewayK8sClusterBaseService(cfg gatewayK8sClusterRuntimeConfig, targetS
 			ProxyBearerToken:         cfg.VClusterProxyBearerToken,
 			KubeconfigServerTemplate: cfg.VClusterKubeconfigServerTemplate,
 		})
-		options = append(options, runtimeadapter.WithK8sClusterProviderApply(provider), runtimeadapter.WithK8sClusterProviderUpgrade(provider), runtimeadapter.WithK8sClusterKubeconfigProvider(provider))
+		options = append(options,
+			runtimeadapter.WithK8sClusterProviderApply(provider),
+			runtimeadapter.WithK8sClusterProviderUpgrade(provider),
+			runtimeadapter.WithK8sClusterProviderDelete(provider),
+			runtimeadapter.WithK8sClusterKubeconfigProvider(provider),
+		)
 		return runtimeadapter.NewLocalK8sClusterService(options...), nil
 	default:
 		return nil, fmt.Errorf("%w: unsupported K8S_CLUSTER_PROVIDER_MODE %q", ports.ErrUnsupported, providerMode)
