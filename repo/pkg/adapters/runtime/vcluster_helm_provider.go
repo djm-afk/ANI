@@ -26,6 +26,7 @@ type VClusterHelmProviderConfig struct {
 	VClusterBinary           string
 	ChartName                string
 	ChartRepo                string
+	ChartVersion             string
 	HelmSetValues            []string
 	Runner                   VClusterHelmRunner
 	ProxyServerTemplate      string
@@ -39,6 +40,7 @@ type VClusterHelmProviderAdapter struct {
 	vclusterBinary           string
 	chartName                string
 	chartRepo                string
+	chartVersion             string
 	helmSetValues            []string
 	runner                   VClusterHelmRunner
 	proxyServerTemplate      string
@@ -61,6 +63,7 @@ func NewVClusterHelmProviderAdapter(config VClusterHelmProviderConfig) *VCluster
 		vclusterBinary:           firstNonEmpty(config.VClusterBinary, defaultVClusterBinary),
 		chartName:                firstNonEmpty(config.ChartName, defaultVClusterChartName),
 		chartRepo:                normalizeVClusterChartRepo(config.ChartRepo),
+		chartVersion:             strings.TrimSpace(config.ChartVersion),
 		helmSetValues:            normalizeVClusterHelmSetValues(config.HelmSetValues),
 		runner:                   runner,
 		proxyServerTemplate:      strings.TrimSpace(config.ProxyServerTemplate),
@@ -123,6 +126,9 @@ func (a *VClusterHelmProviderAdapter) helmUpgradeInstallArgs(releaseName string,
 	}
 	for _, value := range a.helmSetValues {
 		args = append(args, "--set", value)
+	}
+	if a.chartVersion != "" {
+		args = append(args, "--version", a.chartVersion)
 	}
 	return args
 }
