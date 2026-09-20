@@ -13,6 +13,12 @@
 
 ## 已完成批次（按完成时间排列）
 
+### GPU 容器实例调度状态按 live status 现算（2026-09-20，分支 hotfix/gpu-scheduling-state-live）
+
+| 批次 | 内容摘要 | 文件 |
+|---|---|---|
+| GPU-INSTANCE-SCHEDULING-STATE-LIVE-A | GPU 容器实例列表状态筛选（前端发 `scheduling_state`，参数名与契约一致）"看着没效果"修复：① 响应 DTO `instanceGPUResponse` 漏声明契约已存在的 `gpu.scheduling_state`，`gpuResponseFromRecord` 也未填；② 过滤读的是记录物质化时冻结的快照 `GPU.SchedulingState`（唯一写入点 `gpuStatusInfo` 仅在创建时调用，列表期 `refreshOneStoreStatus` 不更新 GPU），导致已 stopped 实例永远命中 `pending`、failed 实例命中 `running`。修复：`gpuSchedulingState` 导出为 `GPUSchedulingState` 并明确"必须由 live status 派生"；`matchesInstanceList` 导出为 `MatchesInstanceList`；过滤改为「kind=gpu_container + `GPUSchedulingState(record.Status)` 现算」；响应用同源派生填充；`list()` 合并 live 孤儿改用 `MatchesInstanceList`（此前孤儿只做 kind/state/network 判定，`scheduling_state`/`rollout_status`/`gpu_model`/`queue_name`/`template_id`/`session_state` 被静默跳过）；`observeOrphan` 补 `spec.replicas=0→Stopped`、`Progressing=False→Failed`，`orphanState` 认 `stopped`。新增 2 个回归用例（`TestMatchesInstanceListSchedulingStateDerivesFromLiveStatus` 用"快照与 live status 故意不一致"构造；`TestObserveOrphanStateMapping` 覆盖五档相位）。未改契约 enum（缺 `stopped`、三端 `queued` 不一致，受兼容性基线治理，属独立变更）。**live 验证 PASS（2026-09-20，ani-system + ani-test2，镜像 `test2-20260920-gpustatelive`）**：两环境各 7 条 GPU 容器实例，响应均出现 `scheduling_state`，上报值与 live 推导 7/7 一致；`scheduling_state=running/stopped/failed/pending/scheduled` 返回集合与真值全一致（修复前 `running` 只回 1 条且是 failed 实例、`stopped` 回 0、`pending` 回 6）；`state=*` 过滤回归通过 | gpu-instance-scheduling-state-live-a.md |
+
 ### 对象存储后端桶一致性修复（2026-09-17，分支 fix/object-storage-bugs）
 
 | 批次 | 内容摘要 | 文件 |

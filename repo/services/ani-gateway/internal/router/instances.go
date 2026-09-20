@@ -526,6 +526,7 @@ type instanceGPUResponse struct {
 	Count              int     `json:"count"`
 	ResourceName       string  `json:"resource_name,omitempty"`
 	QueueName          string  `json:"queue_name,omitempty"`
+	SchedulingState    string  `json:"scheduling_state"`
 	SchedulingReason   string  `json:"scheduling_reason,omitempty"`
 	UtilizationPercent float64 `json:"utilization_percent"`
 }
@@ -1507,6 +1508,7 @@ func (api *instanceAPI) observeOrphan(ctx context.Context, tenantID string, depN
 			CreationTimestamp time.Time `json:"creationTimestamp"`
 		} `json:"metadata"`
 		Spec struct {
+			Replicas *int32 `json:"replicas"`
 			Template struct {
 				Spec struct {
 					Containers []struct {
@@ -1533,11 +1535,29 @@ func (api *instanceAPI) observeOrphan(ctx context.Context, tenantID string, depN
 		return obs
 	}
 	obs.CreatedAt = dep.Metadata.CreationTimestamp
-	if dep.Status.AvailableReplicas > 0 {
+	// Progressing=False means the rollout hit a terminal failure (e.g.
+	// ProgressDeadlineExceeded): surface Failed instead of a stale
+	// Provisioning/Pending so state filters can find failed orphans.
+	progressingFalse := false
+	for _, condition := range dep.Status.Conditions {
+		if strings.EqualFold(condition.Type, "Progressing") && strings.EqualFold(condition.Status, "False") {
+			progressingFalse = true
+			break
+		}
+	}
+	switch {
+	case dep.Status.AvailableReplicas > 0:
 		obs.Phase = "Running"
-	} else if dep.Status.Replicas > 0 {
+	case dep.Spec.Replicas != nil && *dep.Spec.Replicas == 0:
+		// Intentionally scaled to 0 by a lifecycle stop: a stopped orphan,
+		// not a never-started pending one. spec.replicas is the intent
+		// contract (mirrors refreshOneStoreStatus).
+		obs.Phase = "Stopped"
+	case progressingFalse:
+		obs.Phase = "Failed"
+	case dep.Status.Replicas > 0:
 		obs.Phase = "Provisioning"
-	} else {
+	default:
 		obs.Phase = "Pending"
 	}
 	for _, condition := range dep.Status.Conditions {
@@ -1685,6 +1705,8 @@ func orphanState(phase string) ports.WorkloadState {
 		return ports.WorkloadStateRunning
 	case "provisioning", "starting":
 		return ports.WorkloadStateProvisioning
+	case "stopped":
+		return ports.WorkloadStateStopped
 	case "failed":
 		return ports.WorkloadStateFailed
 	case "pending":
@@ -1764,7 +1786,7 @@ func (api *instanceAPI) list(ctx context.Context, c *app.RequestContext) {
 	// triggered by the list request; there is no background reconcile loop
 	// data from the in-memory store.
 	// 单值 kind 时把过滤下推给 store 精准刷新；多值时刷新租户全量记录，
-	// kind 多值 OR 语义由 matchesInstanceList/MatchesInstanceKind 承担。
+	// kind 多值 OR 语义由 MatchesInstanceList/MatchesInstanceKind 承担。
 	refreshKind := ports.WorkloadKind("")
 	if len(kinds) == 1 {
 		refreshKind = ports.WorkloadKind(kinds[0])
@@ -1789,18 +1811,14 @@ func (api *instanceAPI) list(ctx context.Context, c *app.RequestContext) {
 		if _, found := existing[orphan.InstanceID]; found {
 			continue
 		}
-		// 孤儿实例同样要遵循请求里的过滤语义，否则与 store 记录不一致，live
-		// Kubernetes 实例会无条件返回（Bug-2：keyword/search_field 不生效；
-		// Bug-6：state 过滤不生效，state=running 会把 pending 孤儿也带回；
-		// VPC-3/子网-3：vpc_id/subnet_id 归属过滤不生效；
+		// 孤儿实例同样要遵循请求里的**全部**过滤语义，否则与 store 记录不一致，
+		// live Kubernetes 实例会无条件返回（Bug-2：keyword/search_field 不生效；
+		// Bug-6：state 过滤不生效；VPC-3/子网-3：vpc_id/subnet_id 归属过滤不生效；
 		// 多值：kind/state 逗号多值 OR 过滤）。
-		if !runtimeadapter.MatchesInstanceKind(orphan, listReq) {
-			continue
-		}
-		if !runtimeadapter.MatchesInstanceState(orphan, listReq) {
-			continue
-		}
-		if !runtimeadapter.MatchesInstanceNetwork(orphan, listReq) {
+		// 复用 store 记录同一条 MatchesInstanceList，避免 scheduling_state /
+		// rollout_status / gpu_model / queue_name / template_id / session_state
+		// 这些条件被静默跳过（表现为有孤儿的集群上这些筛选"没效果"）。
+		if !runtimeadapter.MatchesInstanceList(orphan, listReq) {
 			continue
 		}
 		records = append(records, orphan)
@@ -3829,11 +3847,17 @@ func gpuResponseFromRecord(record ports.WorkloadInstanceRecord) *instanceGPUResp
 		return nil
 	}
 	return &instanceGPUResponse{
-		Vendor:             string(record.GPU.Vendor),
-		Model:              record.GPU.Model,
-		Count:              record.GPU.Count,
-		ResourceName:       record.GPU.ResourceName,
-		QueueName:          record.GPU.QueueName,
+		Vendor:       string(record.GPU.Vendor),
+		Model:        record.GPU.Model,
+		Count:        record.GPU.Count,
+		ResourceName: record.GPU.ResourceName,
+		QueueName:    record.GPU.QueueName,
+		// Derived from the record's live status, not from the snapshot stored in
+		// record.GPU.SchedulingState: the list-time read-repair refreshes
+		// Status/Container/Network but never GPU, so the stored snapshot goes
+		// stale. Keeping this derived also keeps the response consistent with the
+		// `scheduling_state` query filter (MatchesInstanceList).
+		SchedulingState:    runtimeadapter.GPUSchedulingState(record.Status),
 		SchedulingReason:   record.GPU.SchedulingReason,
 		UtilizationPercent: record.GPU.UtilizationPercent,
 	}

@@ -2792,8 +2792,8 @@ func TestMatchesInstanceListSearchField(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			request := ports.WorkloadInstanceListRequest{Keyword: tc.keyword, SearchField: tc.field}
-			if got := matchesInstanceList(record, request); got != tc.want {
-				t.Fatalf("matchesInstanceList(field=%q keyword=%q) = %v, want %v", tc.field, tc.keyword, got, tc.want)
+			if got := MatchesInstanceList(record, request); got != tc.want {
+				t.Fatalf("MatchesInstanceList(field=%q keyword=%q) = %v, want %v", tc.field, tc.keyword, got, tc.want)
 			}
 		})
 	}
@@ -2846,8 +2846,84 @@ func TestMatchesInstanceListExcludesDeletedByDefault(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			request := ports.WorkloadInstanceListRequest{State: ports.WorkloadState(tc.state)}
-			if got := matchesInstanceList(tc.record, request); got != tc.want {
-				t.Fatalf("matchesInstanceList(state=%q) = %v, want %v", tc.state, got, tc.want)
+			if got := MatchesInstanceList(tc.record, request); got != tc.want {
+				t.Fatalf("MatchesInstanceList(state=%q) = %v, want %v", tc.state, got, tc.want)
+			}
+		})
+	}
+}
+
+// 回归：scheduling_state 过滤必须按 live status 现算，不得读 record.GPU.SchedulingState
+// 这个"物质化快照"。列表期读修复（refreshOneStoreStatus）不会更新该快照，历史上导致
+// 过滤命中陈旧值：已 stopped 的实例永远命中 pending、failed 实例命中 running，
+// 于是前端"运行中/已停止/异常"筛选结果错乱。
+func TestMatchesInstanceListSchedulingStateDerivesFromLiveStatus(t *testing.T) {
+	// 以下 GPU 记录的 GPU.SchedulingState 快照故意与 live status 不一致，
+	// 用于证明过滤走的是 Status 而不是快照。
+	stopped := ports.WorkloadInstanceRecord{
+		TenantID:   "tenant-a",
+		InstanceID: "inst-gpu-stopped",
+		Name:       "gpu-stopped",
+		Kind:       ports.WorkloadKindGPUContainer,
+		Status:     ports.WorkloadStatus{State: ports.WorkloadStateStopped},
+		GPU:        &ports.GPUInstanceStatus{SchedulingState: "pending"},
+		CreatedAt:  time.Unix(100, 0),
+	}
+	failed := ports.WorkloadInstanceRecord{
+		TenantID:   "tenant-a",
+		InstanceID: "inst-gpu-failed",
+		Name:       "gpu-failed",
+		Kind:       ports.WorkloadKindGPUContainer,
+		Status:     ports.WorkloadStatus{State: ports.WorkloadStateFailed},
+		GPU:        &ports.GPUInstanceStatus{SchedulingState: "running"},
+		CreatedAt:  time.Unix(200, 0),
+	}
+	pending := ports.WorkloadInstanceRecord{
+		TenantID:   "tenant-a",
+		InstanceID: "inst-gpu-pending",
+		Name:       "gpu-pending",
+		Kind:       ports.WorkloadKindGPUContainer,
+		Status:     ports.WorkloadStatus{State: ports.WorkloadStateProvisioning},
+		GPU:        &ports.GPUInstanceStatus{SchedulingState: "pending"},
+		CreatedAt:  time.Unix(300, 0),
+	}
+	scheduled := ports.WorkloadInstanceRecord{
+		TenantID:   "tenant-a",
+		InstanceID: "inst-gpu-scheduled",
+		Name:       "gpu-scheduled",
+		Kind:       ports.WorkloadKindGPUContainer,
+		Status:     ports.WorkloadStatus{State: ports.WorkloadStateProvisioning, NodeName: "gpu-node-a"},
+		GPU:        &ports.GPUInstanceStatus{SchedulingState: "pending"},
+		CreatedAt:  time.Unix(400, 0),
+	}
+	vm := ports.WorkloadInstanceRecord{
+		TenantID:   "tenant-a",
+		InstanceID: "inst-vm",
+		Name:       "vm-1",
+		Kind:       ports.WorkloadKindVM,
+		Status:     ports.WorkloadStatus{State: ports.WorkloadStateRunning},
+		CreatedAt:  time.Unix(500, 0),
+	}
+
+	cases := []struct {
+		name   string
+		record ports.WorkloadInstanceRecord
+		state  string
+		want   bool
+	}{
+		{"stopped 命中 stopped（快照 pending 不得生效）", stopped, "stopped", true},
+		{"stopped 不再命中 pending", stopped, "pending", false},
+		{"failed 命中 failed（快照 running 不得生效）", failed, "failed", true},
+		{"failed 不再命中 running", failed, "running", false},
+		{"无节点 provisioning 命中 pending", pending, "pending", true},
+		{"有节点 provisioning 命中 scheduled", scheduled, "scheduled", true},
+		{"scheduling_state 对非 GPU 实例不适用", vm, "running", false},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			request := ports.WorkloadInstanceListRequest{SchedulingState: tc.state}
+			if got := MatchesInstanceList(tc.record, request); got != tc.want {
+				t.Fatalf("MatchesInstanceList(scheduling_state=%q) = %v, want %v", tc.state, got, tc.want)
 			}
 		})
 	}

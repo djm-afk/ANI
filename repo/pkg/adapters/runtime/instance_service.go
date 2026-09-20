@@ -618,7 +618,7 @@ func (s *LocalInstanceService) List(ctx context.Context, request ports.WorkloadI
 	}
 	filtered := make([]ports.WorkloadInstanceRecord, 0, len(records))
 	for _, record := range records {
-		if !matchesInstanceList(record, request) {
+		if !MatchesInstanceList(record, request) {
 			continue
 		}
 		filtered = append(filtered, s.withIdentity(ctx, record))
@@ -703,7 +703,7 @@ func MatchesInstanceKind(record ports.WorkloadInstanceRecord, request ports.Work
 
 // kindForStoreQuery 推导传给 store 的单值 kind 过滤：单值请求（含多值集合只含
 // 一项时）下推到 store SQL 精确过滤；多值或未指定时返回空串，由内存过滤
-// （matchesInstanceList → MatchesInstanceKind）承担多值 OR 语义。
+// （MatchesInstanceList → MatchesInstanceKind）承担多值 OR 语义。
 func kindForStoreQuery(request ports.WorkloadInstanceListRequest) ports.WorkloadKind {
 	if request.Kind != "" {
 		return request.Kind
@@ -727,7 +727,13 @@ func MatchesInstanceNetwork(record ports.WorkloadInstanceRecord, request ports.W
 	return true
 }
 
-func matchesInstanceList(record ports.WorkloadInstanceRecord, request ports.WorkloadInstanceListRequest) bool {
+// MatchesInstanceList 判断单条实例记录是否命中列表请求的全部过滤条件（kind/state/
+// keyword/network/时间窗/spec/image/node/rollout/gpu/调度/模板/会话）。
+// 导出使 router 层合并的 live Kubernetes 孤儿实例与 store 记录共用同一套过滤语义：
+// 此前孤儿只做 kind/state/network 三项，scheduling_state、rollout_status、gpu_model、
+// queue_name、template_id、session_state 等条件被静默跳过，导致这些筛选在存在孤儿的
+// 集群上"看着没效果"。
+func MatchesInstanceList(record ports.WorkloadInstanceRecord, request ports.WorkloadInstanceListRequest) bool {
 	if !MatchesInstanceKind(record, request) {
 		return false
 	}
@@ -764,8 +770,17 @@ func matchesInstanceList(record ports.WorkloadInstanceRecord, request ports.Work
 	if request.QueueName != "" && (record.GPU == nil || record.GPU.QueueName != request.QueueName) {
 		return false
 	}
-	if request.SchedulingState != "" && (record.GPU == nil || record.GPU.SchedulingState != request.SchedulingState) {
-		return false
+	if request.SchedulingState != "" {
+		// scheduling_state 只对 GPU 容器实例有意义。匹配值必须由 live status 现算，
+		// 不能读 record.GPU.SchedulingState —— 那只是记录物质化时的快照，
+		// 列表期读修复（refreshOneStoreStatus）不会更新它，会导致过滤命中陈旧值
+		// （已 stopped 的实例永远命中 pending、failed 实例命中 running）。
+		if record.Kind != ports.WorkloadKindGPUContainer {
+			return false
+		}
+		if GPUSchedulingState(record.Status) != request.SchedulingState {
+			return false
+		}
 	}
 	if request.TemplateID != "" && (record.Sandbox == nil || record.Sandbox.TemplateID != request.TemplateID) {
 		return false
