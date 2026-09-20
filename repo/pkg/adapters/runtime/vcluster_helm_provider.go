@@ -2,6 +2,7 @@ package runtime
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"os/exec"
 	"strings"
@@ -79,6 +80,9 @@ func (a *VClusterHelmProviderAdapter) ApplyK8sCluster(ctx context.Context, reque
 	}
 	namespace := tenantNamespace(request.TenantID)
 	releaseName := request.ClusterID
+	if err := a.ensureNamespaceHostsSingleVCluster(ctx, namespace, releaseName); err != nil {
+		return ports.K8sClusterProviderApplyResult{}, err
+	}
 	args := a.helmUpgradeInstallArgs(releaseName, namespace)
 	if _, err := a.runner.Run(ctx, a.helmBinary, args...); err != nil {
 		return ports.K8sClusterProviderApplyResult{}, fmt.Errorf("apply vCluster Helm release: %w", err)
@@ -106,6 +110,52 @@ func (a *VClusterHelmProviderAdapter) ApplyK8sCluster(ctx context.Context, reque
 		Reason:    "vCluster Helm release applied",
 		AppliedAt: a.now().UTC(),
 	}, nil
+}
+
+// ANI-02 §2.1.2 规定 v1.0.0 多租户隔离为「每租户一个 vCluster」，vcluster syncer 同样
+// 拒绝同一 namespace 内的多个虚拟集群。集群记录目前只存在 gateway 进程内存（重启即丢
+// 失），因此必须在底座侧以 Helm release 作为权威判定：否则残留 vcluster 会让新建集群
+// syncer CrashLoop，并让创建请求等待约 10 分钟后以 400 失败。
+func (a *VClusterHelmProviderAdapter) ensureNamespaceHostsSingleVCluster(ctx context.Context, namespace string, releaseName string) error {
+	output, err := a.runner.Run(ctx, a.helmBinary, a.helmListArgs(namespace)...)
+	if err != nil {
+		return fmt.Errorf("list vCluster Helm releases: %w", err)
+	}
+	existing, err := firstForeignVClusterRelease(output, releaseName)
+	if err != nil {
+		return err
+	}
+	if existing != "" {
+		return fmt.Errorf("%w: namespace %s already hosts vCluster %s; only one vCluster per tenant is supported", ports.ErrConflict, namespace, existing)
+	}
+	return nil
+}
+
+func (a *VClusterHelmProviderAdapter) helmListArgs(namespace string) []string {
+	return []string{"list", "--namespace", namespace, "--output", "json"}
+}
+
+// firstForeignVClusterRelease 返回同一 namespace 中已存在的、非本次要安装的 vCluster
+// release 名；namespace 内非 vcluster 的 Helm release 不影响判定。
+func firstForeignVClusterRelease(output []byte, releaseName string) (string, error) {
+	trimmed := strings.TrimSpace(string(output))
+	if trimmed == "" {
+		return "", nil
+	}
+	var releases []struct {
+		Name  string `json:"name"`
+		Chart string `json:"chart"`
+	}
+	if err := json.Unmarshal([]byte(trimmed), &releases); err != nil {
+		return "", fmt.Errorf("%w: parse helm list output: %v", ports.ErrInvalid, err)
+	}
+	for _, release := range releases {
+		if release.Name == releaseName || !strings.Contains(strings.ToLower(release.Chart), "vcluster") {
+			continue
+		}
+		return release.Name, nil
+	}
+	return "", nil
 }
 
 func (a *VClusterHelmProviderAdapter) helmUpgradeInstallArgs(releaseName string, namespace string) []string {

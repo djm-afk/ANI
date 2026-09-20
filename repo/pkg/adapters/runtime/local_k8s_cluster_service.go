@@ -3,6 +3,7 @@ package runtime
 import (
 	"context"
 	"encoding/base64"
+	"errors"
 	"fmt"
 	"sort"
 	"strings"
@@ -27,6 +28,8 @@ type localK8sClusterService struct {
 	nodePoolProvider   ports.K8sClusterNodePoolProvider
 	kubeconfigProvider ports.K8sClusterKubeconfigProvider
 	targetStore        ports.K8sClusterProxyTargetStore
+	// clusterStore 非空时集群记录以数据库为事实来源，内存 map 不再参与集群读写。
+	clusterStore ports.K8sClusterStore
 }
 
 type K8sClusterServiceOption func(*localK8sClusterService)
@@ -67,6 +70,14 @@ func WithK8sClusterProxyTargetStore(store ports.K8sClusterProxyTargetStore) K8sC
 	}
 }
 
+// WithK8sClusterStore 让集群记录持久化。集群记录此前只存进程内存，网关每次滚动重启即
+// 丢失：界面看不到已有集群，而底座 Helm release 仍在，用户既删不掉也建不了新的。
+func WithK8sClusterStore(store ports.K8sClusterStore) K8sClusterServiceOption {
+	return func(service *localK8sClusterService) {
+		service.clusterStore = store
+	}
+}
+
 func NewLocalK8sClusterService(options ...K8sClusterServiceOption) ports.K8sClusterService {
 	service := &localK8sClusterService{
 		byID:               map[string]ports.K8sClusterRecord{},
@@ -90,6 +101,9 @@ func (s *localK8sClusterService) CreateCluster(ctx context.Context, req ports.K8
 	if req.TenantID == "" || req.Name == "" || req.IdempotencyKey == "" {
 		return ports.K8sClusterRecord{}, fmt.Errorf("%w: tenant_id/name/idempotency_key required", ports.ErrInvalid)
 	}
+	if s.clusterStore != nil {
+		return s.createClusterFromStore(ctx, req)
+	}
 	key := req.TenantID + ":" + req.IdempotencyKey
 	state := ports.K8sClusterStateRunning
 	if s.providerApply != nil {
@@ -103,6 +117,16 @@ func (s *localK8sClusterService) CreateCluster(ctx context.Context, req ports.K8
 			s.mu.Unlock()
 			return existing, nil
 		}
+	}
+	// ANI-02 §2.1.2 定义 v1.0.0 多租户隔离方案为「每租户一个 vCluster」，且 vcluster
+	// syncer 拒绝同一 namespace 内的多个虚拟集群；本实现的每个集群都落在租户 ns，
+	// 因此第二个集群必须在此显式拒绝，而不是让它创建成功后在建底座时失败。
+	for _, existing := range s.byID {
+		if existing.TenantID != req.TenantID {
+			continue
+		}
+		s.mu.Unlock()
+		return ports.K8sClusterRecord{}, fmt.Errorf("%w: tenant already has k8s cluster %s; only one vCluster per tenant is supported", ports.ErrConflict, existing.ClusterID)
 	}
 	s.byID[rec.ClusterID] = rec
 	s.idem[key] = rec.ClusterID
@@ -155,7 +179,10 @@ func (s *localK8sClusterService) discardClusterRecord(clusterID string, idemKey 
 	}
 }
 
-func (s *localK8sClusterService) GetCluster(_ context.Context, req ports.K8sClusterGetRequest) (ports.K8sClusterRecord, error) {
+func (s *localK8sClusterService) GetCluster(ctx context.Context, req ports.K8sClusterGetRequest) (ports.K8sClusterRecord, error) {
+	if s.clusterStore != nil {
+		return s.clusterStore.GetK8sCluster(ctx, req)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	rec, ok := s.byID[req.ClusterID]
@@ -164,7 +191,10 @@ func (s *localK8sClusterService) GetCluster(_ context.Context, req ports.K8sClus
 	}
 	return rec, nil
 }
-func (s *localK8sClusterService) ListClusters(_ context.Context, req ports.K8sClusterListRequest) ([]ports.K8sClusterRecord, error) {
+func (s *localK8sClusterService) ListClusters(ctx context.Context, req ports.K8sClusterListRequest) ([]ports.K8sClusterRecord, error) {
+	if s.clusterStore != nil {
+		return s.clusterStore.ListK8sClusters(ctx, req)
+	}
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	out := []ports.K8sClusterRecord{}
@@ -177,6 +207,9 @@ func (s *localK8sClusterService) ListClusters(_ context.Context, req ports.K8sCl
 	return out, nil
 }
 func (s *localK8sClusterService) DeleteCluster(ctx context.Context, req ports.K8sClusterGetRequest) (ports.K8sClusterRecord, error) {
+	if s.clusterStore != nil {
+		return s.deleteClusterFromStore(ctx, req)
+	}
 	s.mu.Lock()
 	rec, ok := s.byID[req.ClusterID]
 	if !ok || rec.TenantID != req.TenantID {
@@ -244,11 +277,173 @@ func (s *localK8sClusterService) purgeClusterIndexes(clusterID string) {
 	}
 }
 
+// 以下 store 模式实现以数据库为事实来源，语义与上面内存路径逐一对应。
+
+func (s *localK8sClusterService) createClusterFromStore(ctx context.Context, req ports.K8sClusterCreateRequest) (ports.K8sClusterRecord, error) {
+	if existing, err := s.clusterStore.FindK8sClusterByCreateIdempotencyKey(ctx, req.TenantID, req.IdempotencyKey); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, ports.ErrNotFound) {
+		return ports.K8sClusterRecord{}, err
+	}
+	// ANI-02 §2.1.2：每租户一个 vCluster。数据库侧另有 UNIQUE (tenant_id) 唯一索引兜底
+	// 并发创建（冲突由 store 映射为 ErrConflict）。
+	existing, err := s.clusterStore.ListK8sClusters(ctx, ports.K8sClusterListRequest{TenantID: req.TenantID})
+	if err != nil {
+		return ports.K8sClusterRecord{}, err
+	}
+	if len(existing) > 0 {
+		return ports.K8sClusterRecord{}, fmt.Errorf("%w: tenant already has k8s cluster %s; only one vCluster per tenant is supported", ports.ErrConflict, existing[0].ClusterID)
+	}
+	state := ports.K8sClusterStateRunning
+	if s.providerApply != nil {
+		state = ports.K8sClusterStateProvisioning
+	}
+	now := time.Now().Unix()
+	rec := ports.K8sClusterRecord{ClusterID: "k8sclu-" + uuid.NewString(), TenantID: req.TenantID, Name: req.Name, Version: req.Version, State: state, Reason: "local vcluster profile", Provider: "local", CreatedAt: now, UpdatedAt: now}
+	if err := s.clusterStore.UpsertK8sCluster(ctx, rec, req.IdempotencyKey); err != nil {
+		return ports.K8sClusterRecord{}, err
+	}
+	if s.providerApply == nil {
+		return rec, nil
+	}
+	result, err := s.providerApply.ApplyK8sCluster(ctx, ports.K8sClusterProviderApplyRequest{
+		TenantID:  rec.TenantID,
+		ClusterID: rec.ClusterID,
+		Name:      rec.Name,
+		Version:   rec.Version,
+	})
+	if err != nil {
+		s.discardStoredClusterRecord(ctx, rec)
+		return ports.K8sClusterRecord{}, err
+	}
+	if !result.Applied {
+		s.discardStoredClusterRecord(ctx, rec)
+		return ports.K8sClusterRecord{}, fmt.Errorf("%w: k8s cluster provider did not apply cluster", ports.ErrNotConfigured)
+	}
+	rec.Provider = result.Provider
+	rec.RealProvider = true
+	rec.ProviderRefs = append([]string(nil), result.ResourceRefs...)
+	rec.Reason = firstNonEmpty(result.Reason, "vCluster provider applied")
+	rec.State = ports.K8sClusterStateRunning
+	rec.UpdatedAt = time.Now().Unix()
+	if s.targetStore != nil && result.ProxyTarget.Server != "" {
+		target := result.ProxyTarget
+		target.TenantID = rec.TenantID
+		target.ClusterID = rec.ClusterID
+		if err := s.targetStore.UpsertK8sClusterProxyTarget(ctx, target); err != nil {
+			s.discardStoredClusterRecord(ctx, rec)
+			return ports.K8sClusterRecord{}, err
+		}
+	}
+	if err := s.clusterStore.UpsertK8sCluster(ctx, rec, ""); err != nil {
+		return ports.K8sClusterRecord{}, err
+	}
+	return rec, nil
+}
+
+func (s *localK8sClusterService) discardStoredClusterRecord(ctx context.Context, rec ports.K8sClusterRecord) {
+	_ = s.clusterStore.DeleteK8sCluster(ctx, ports.K8sClusterGetRequest{TenantID: rec.TenantID, ClusterID: rec.ClusterID})
+}
+
+func (s *localK8sClusterService) deleteClusterFromStore(ctx context.Context, req ports.K8sClusterGetRequest) (ports.K8sClusterRecord, error) {
+	rec, err := s.clusterStore.GetK8sCluster(ctx, req)
+	if err != nil {
+		return ports.K8sClusterRecord{}, err
+	}
+	rec.State = ports.K8sClusterStateDeleting
+	rec.UpdatedAt = time.Now().Unix()
+	if err := s.clusterStore.UpsertK8sCluster(ctx, rec, ""); err != nil {
+		return ports.K8sClusterRecord{}, err
+	}
+	if rec.RealProvider && s.providerDelete != nil {
+		result, err := s.providerDelete.DeleteK8sCluster(ctx, ports.K8sClusterProviderDeleteRequest{
+			TenantID:  rec.TenantID,
+			ClusterID: rec.ClusterID,
+			Name:      rec.Name,
+		})
+		if err != nil {
+			s.restoreStoredClusterAfterFailedDelete(ctx, rec)
+			return ports.K8sClusterRecord{}, err
+		}
+		if !result.Deleted {
+			s.restoreStoredClusterAfterFailedDelete(ctx, rec)
+			return ports.K8sClusterRecord{}, fmt.Errorf("%w: k8s cluster provider did not uninstall cluster", ports.ErrNotConfigured)
+		}
+		rec.Provider = firstNonEmpty(result.Provider, rec.Provider)
+		rec.ProviderRefs = append([]string(nil), result.ResourceRefs...)
+		rec.Reason = firstNonEmpty(result.Reason, "vCluster provider uninstalled")
+	}
+	if s.targetStore != nil {
+		if err := s.targetStore.DeleteK8sClusterProxyTarget(ctx, req); err != nil && err != ports.ErrNotFound {
+			return ports.K8sClusterRecord{}, err
+		}
+	}
+	if err := s.clusterStore.DeleteK8sCluster(ctx, req); err != nil {
+		return ports.K8sClusterRecord{}, err
+	}
+	return rec, nil
+}
+
+func (s *localK8sClusterService) restoreStoredClusterAfterFailedDelete(ctx context.Context, rec ports.K8sClusterRecord) {
+	rec.State = ports.K8sClusterStateRunning
+	rec.UpdatedAt = time.Now().Unix()
+	_ = s.clusterStore.UpsertK8sCluster(ctx, rec, "")
+}
+
+func (s *localK8sClusterService) upgradeClusterFromStore(ctx context.Context, req ports.K8sClusterUpgradeRequest) (ports.K8sClusterRecord, error) {
+	if existing, err := s.clusterStore.FindK8sClusterByUpgradeIdempotencyKey(ctx, req.TenantID, req.IdempotencyKey); err == nil {
+		return existing, nil
+	} else if !errors.Is(err, ports.ErrNotFound) {
+		return ports.K8sClusterRecord{}, err
+	}
+	rec, err := s.clusterStore.GetK8sCluster(ctx, ports.K8sClusterGetRequest{TenantID: req.TenantID, ClusterID: req.ClusterID})
+	if err != nil {
+		return ports.K8sClusterRecord{}, err
+	}
+	if rec.State != ports.K8sClusterStateRunning {
+		return ports.K8sClusterRecord{}, fmt.Errorf("%w: upgrade requires a running k8s cluster", ports.ErrConflict)
+	}
+	previousVersion := rec.Version
+	rec.Version = req.Version
+	rec.Reason = "local vcluster profile upgraded"
+	if s.providerUpgrade != nil && rec.RealProvider {
+		result, err := s.providerUpgrade.UpgradeK8sCluster(ctx, ports.K8sClusterProviderUpgradeRequest{
+			TenantID:       rec.TenantID,
+			ClusterID:      rec.ClusterID,
+			Name:           rec.Name,
+			CurrentVersion: previousVersion,
+			TargetVersion:  req.Version,
+		})
+		if err != nil {
+			return ports.K8sClusterRecord{}, err
+		}
+		if !result.Applied {
+			return ports.K8sClusterRecord{}, fmt.Errorf("%w: k8s cluster provider did not apply upgrade", ports.ErrNotConfigured)
+		}
+		rec.Provider = firstNonEmpty(result.Provider, rec.Provider)
+		rec.RealProvider = true
+		rec.ProviderRefs = append([]string(nil), result.ResourceRefs...)
+		rec.Reason = firstNonEmpty(result.Reason, "vCluster provider upgraded")
+	}
+	rec.State = ports.K8sClusterStateRunning
+	rec.UpdatedAt = time.Now().Unix()
+	if err := s.clusterStore.UpsertK8sCluster(ctx, rec, ""); err != nil {
+		return ports.K8sClusterRecord{}, err
+	}
+	if err := s.clusterStore.SetK8sClusterUpgradeIdempotency(ctx, rec.TenantID, rec.ClusterID, req.IdempotencyKey); err != nil {
+		return ports.K8sClusterRecord{}, err
+	}
+	return rec, nil
+}
+
 func (s *localK8sClusterService) UpgradeCluster(ctx context.Context, req ports.K8sClusterUpgradeRequest) (ports.K8sClusterRecord, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	if req.TenantID == "" || req.ClusterID == "" || req.IdempotencyKey == "" || req.Version == "" {
 		return ports.K8sClusterRecord{}, fmt.Errorf("%w: tenant_id/cluster_id/idempotency_key/version required", ports.ErrInvalid)
+	}
+	if s.clusterStore != nil {
+		return s.upgradeClusterFromStore(ctx, req)
 	}
 	idemKey := req.TenantID + ":" + req.ClusterID + ":" + req.IdempotencyKey
 	if rec, ok := s.upgradeIdem[idemKey]; ok {

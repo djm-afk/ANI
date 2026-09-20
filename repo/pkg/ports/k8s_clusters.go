@@ -311,3 +311,18 @@ type K8sClusterService interface {
 	Proxy(ctx context.Context, req K8sClusterProxyRequest) (K8sClusterProxyRecord, error)
 	ListWorkloads(ctx context.Context, req K8sClusterWorkloadListRequest) ([]K8sClusterWorkloadRecord, error)
 }
+
+// K8sClusterStore 持久化 K8s 集群控制面记录。此前集群记录只存在网关进程内存，每次滚动
+// 重启即丢失：界面看不到集群，而底座 Helm release 仍在，用户既无法删除也无法新建
+// （同租户唯一约束）。注入该 store 后，集群记录改为以数据库为事实来源。
+type K8sClusterStore interface {
+	// UpsertK8sCluster 写入或更新集群记录；createIdempotencyKey 为空表示不登记创建幂等键。
+	// 同一租户已有集群时返回 ErrConflict。
+	UpsertK8sCluster(ctx context.Context, record K8sClusterRecord, createIdempotencyKey string) error
+	GetK8sCluster(ctx context.Context, req K8sClusterGetRequest) (K8sClusterRecord, error)
+	ListK8sClusters(ctx context.Context, req K8sClusterListRequest) ([]K8sClusterRecord, error)
+	DeleteK8sCluster(ctx context.Context, req K8sClusterGetRequest) error
+	FindK8sClusterByCreateIdempotencyKey(ctx context.Context, tenantID string, idempotencyKey string) (K8sClusterRecord, error)
+	SetK8sClusterUpgradeIdempotency(ctx context.Context, tenantID string, clusterID string, idempotencyKey string) error
+	FindK8sClusterByUpgradeIdempotencyKey(ctx context.Context, tenantID string, idempotencyKey string) (K8sClusterRecord, error)
+}
