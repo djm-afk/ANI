@@ -2569,6 +2569,56 @@ func TestVMReadRepairDispatchesGetListAndTaskObservation(t *testing.T) {
 	}
 }
 
+// 孤儿 Deployment 状态映射回归：observeOrphan 必须区分 stopped（spec.replicas=0，
+// 生命周期停止）与 failed（Progressing=False，如 ProgressDeadlineExceeded），
+// 不能把两者都压成 Pending/Provisioning，否则 kind=gpu_container 的
+// state=stopped / state=failed 过滤永远查不到孤儿实例（真实缺陷：GPU 容器按状态查询失明）。
+func TestObserveOrphanStateMapping(t *testing.T) {
+	cases := []struct {
+		name       string
+		deployment string
+		wantPhase  string
+		wantState  ports.WorkloadState
+	}{
+		{"running", `{"spec":{"replicas":1},"status":{"availableReplicas":1,"replicas":1}}`, "Running", ports.WorkloadStateRunning},
+		{"stopped", `{"spec":{"replicas":0},"status":{}}`, "Stopped", ports.WorkloadStateStopped},
+		{"failed", `{"spec":{"replicas":1},"status":{"replicas":1,"conditions":[{"type":"Progressing","status":"False","reason":"ProgressDeadlineExceeded"}]}}`, "Failed", ports.WorkloadStateFailed},
+		{"provisioning", `{"spec":{"replicas":1},"status":{"replicas":1}}`, "Provisioning", ports.WorkloadStateProvisioning},
+		{"pending", `{"spec":{"replicas":1},"status":{}}`, "Pending", ports.WorkloadStatePending},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				w.Header().Set("Content-Type", "application/json")
+				if strings.Contains(r.URL.Path, "/deployments/") {
+					_, _ = w.Write([]byte(tc.deployment))
+					return
+				}
+				if strings.HasSuffix(r.URL.Path, "/pods") {
+					_, _ = w.Write([]byte(`{"items":[]}`))
+					return
+				}
+				http.Error(w, "unexpected "+r.URL.Path, http.StatusNotFound)
+			}))
+			defer srv.Close()
+			k8s, err := runtimeadapter.NewKubernetesRESTClient(runtimeadapter.KubernetesRESTClientConfig{
+				Host: srv.URL, HTTPClient: srv.Client(), Now: func() time.Time { return time.Time{} },
+			})
+			if err != nil {
+				t.Fatalf("NewKubernetesRESTClient error = %v", err)
+			}
+			api := &instanceAPI{k8sClient: k8s}
+			obs := api.observeOrphan(context.Background(), "tenant-a", "gpu-orphan-"+tc.name)
+			if obs.Phase != tc.wantPhase {
+				t.Fatalf("observeOrphan phase = %q, want %q", obs.Phase, tc.wantPhase)
+			}
+			if state := orphanState(obs.Phase); state != tc.wantState {
+				t.Fatalf("orphanState(%q) = %q, want %q", obs.Phase, state, tc.wantState)
+			}
+		})
+	}
+}
+
 // 多值过滤回归：parseMultiValueQuery 把逗号分隔查询参数拆成集合（OR 语义），
 // 空白项与首尾空白剔除，空串/全空白返回 nil 表示不过滤。
 func TestParseMultiValueQuery(t *testing.T) {
