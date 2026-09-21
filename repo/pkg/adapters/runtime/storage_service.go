@@ -1125,16 +1125,33 @@ func (s *LocalStorageService) UnmountFilesystem(ctx context.Context, request por
 	return s.enrichFilesystemLocked(record), nil
 }
 
-func (s *LocalStorageService) GetFilesystemMountCommand(_ context.Context, request ports.StorageResourceGetRequest) (ports.FilesystemMountCommand, error) {
-	s.mu.RLock()
-	defer s.mu.RUnlock()
-	record, ok := s.filesystems[strings.TrimSpace(request.ResourceID)]
-	if !ok || record.TenantID != request.TenantID || record.State == ports.StorageResourceDeleted {
+func (s *LocalStorageService) GetFilesystemMountCommand(ctx context.Context, request ports.StorageResourceGetRequest) (ports.FilesystemMountCommand, error) {
+	record, found, err := s.lookupFilesystemRecord(ctx, request.TenantID, request.ResourceID)
+	if err != nil {
+		return ports.FilesystemMountCommand{}, err
+	}
+	if !found {
 		return ports.FilesystemMountCommand{}, ports.ErrNotFound
 	}
+	if err := s.hydrateFilesystemMountTargets(ctx, request.TenantID, record.FilesystemID); err != nil {
+		return ports.FilesystemMountCommand{}, err
+	}
+	// 与 GET /filesystems/{id} 的 mount_command 口径一致：优先回放落库命令（挂载时生成，
+	// 携带真实挂载目标 IP 与实例实际挂载点）；仅落库为空（历史 NULL 行）时才按挂载目标合成。
+	if persisted := strings.TrimSpace(record.MountCommand); persisted != "" {
+		ipAddress, mountPath := storageFilesystemMountCommandParts(persisted)
+		return ports.FilesystemMountCommand{
+			Command:   persisted,
+			Protocol:  record.Protocol,
+			IPAddress: ipAddress,
+			MountPath: mountPath,
+		}, nil
+	}
+	s.mu.RLock()
+	defer s.mu.RUnlock()
 	ipAddress := "127.0.0.1"
 	for _, target := range s.mountTargets {
-		if target.FilesystemID == record.FilesystemID && target.Status == ports.MountTargetAvailable {
+		if target.FilesystemID == record.FilesystemID && target.Status == ports.MountTargetAvailable && strings.TrimSpace(target.IPAddress) != "" {
 			ipAddress = target.IPAddress
 			break
 		}
@@ -1607,6 +1624,72 @@ func (s *LocalStorageService) GetStorageBucket(ctx context.Context, request port
 	return enriched, nil
 }
 
+// DeleteStorageBucket 软删租户名下的对象存储桶：在控制面写入墓碑记录
+// （state=deleted + deleted_at），使其从列表、详情与全部桶级子操作中消失。
+// 物理 MinIO 桶属跨租户共享底座，本方法不回收；桶内仍有该租户活跃对象时
+// 返回 ErrConflict，要求先清空对象。
+func (s *LocalStorageService) DeleteStorageBucket(ctx context.Context, request ports.StorageResourceGetRequest) (ports.StorageBucketRecord, error) {
+	tenantID := strings.TrimSpace(request.TenantID)
+	bucketID := strings.TrimSpace(request.ResourceID)
+	if tenantID == "" || bucketID == "" {
+		return ports.StorageBucketRecord{}, fmt.Errorf("%w: tenant_id and bucket_id are required", ports.ErrInvalid)
+	}
+	bucket, ok := s.resolveBucket(ctx, tenantID, bucketID)
+	if !ok {
+		return ports.StorageBucketRecord{}, fmt.Errorf("%w: bucket %s not found", ports.ErrNotFound, bucketID)
+	}
+	if count := s.bucketActiveObjectCount(ctx, bucket); count > 0 {
+		return ports.StorageBucketRecord{}, fmt.Errorf("%w: bucket %s still holds %d object(s), delete them first", ports.ErrConflict, bucket.BucketID, count)
+	}
+	now := s.now().UTC()
+	bucket.State = ports.StorageResourceDeleted
+	bucket.Reason = "deleted by local storage profile"
+	bucket.UpdatedAt = now
+	bucket.DeletedAt = now
+	if err := s.upsertBucket(ctx, bucket); err != nil {
+		return ports.StorageBucketRecord{}, err
+	}
+	// 内存缓存不保留墓碑：创建路径的重名检查与创建幂等键查表都以
+	// s.buckets 为来源，保留墓碑会让同名重建被误判为冲突或复用旧记录。
+	s.mu.Lock()
+	delete(s.buckets, bucket.BucketID)
+	s.mu.Unlock()
+	slog.Info("storage bucket deleted",
+		"tenant_id", bucket.TenantID,
+		"bucket_id", bucket.BucketID,
+		"name", bucket.Name,
+		"object_store_configured", s.objectStore != nil,
+	)
+	return s.enrichStorageBucketRecord(bucket), nil
+}
+
+// bucketActiveObjectCount 统计该租户在该桶下的活跃对象数，用于删除前的非空判定。
+// 接入真实对象存储时以底座用量口径为准（与 enrichBucketUsage 一致）；底座查询
+// 失败时回退控制面对象记录统计并告警，避免因统计失败而放行删除非空桶。
+func (s *LocalStorageService) bucketActiveObjectCount(ctx context.Context, bucket ports.StorageBucketRecord) int {
+	if s.objectStore != nil {
+		usage, err := s.objectStore.BucketUsage(ctx, ports.BucketClass(bucket.Name), bucket.TenantID)
+		if err == nil {
+			return int(usage.ObjectCount)
+		}
+		slog.Warn("storage bucket usage lookup failed during delete; falling back to control-plane objects",
+			"tenant_id", bucket.TenantID,
+			"bucket_id", bucket.BucketID,
+			"err", err,
+		)
+	}
+	s.hydrateObjectsFromStore(ctx, bucket.TenantID)
+	s.mu.RLock()
+	defer s.mu.RUnlock()
+	count := 0
+	for _, object := range s.objects {
+		if object.TenantID == bucket.TenantID && object.Bucket == bucket.Name && object.State != ports.StorageResourceDeleted {
+			count++
+		}
+	}
+	return count
+}
+
 // hydrateObjectsFromStore backfills the in-memory object cache from the
 // control-plane store authority so bucket-level object operations survive
 // gateway restarts. Records already cached win to preserve in-flight
@@ -1855,7 +1938,13 @@ func (s *LocalStorageService) DeleteBucketObject(ctx context.Context, request po
 	if object, ok := s.objects[targetID]; ok {
 		object.State = ports.StorageResourceDeleted
 		object.UpdatedAt = s.now().UTC()
+		object.DeletedAt = object.UpdatedAt
 		s.objects[targetID] = object
+		// 对象墓碑必须落盘：否则网关重启后 hydrate 会把已删对象当作活跃对象，
+		// 使桶永远无法通过非空判定删除。
+		if err := s.upsertObject(ctx, object); err != nil {
+			return ports.StorageBucketObjectDeleteResult{}, err
+		}
 	}
 	return ports.StorageBucketObjectDeleteResult{BucketID: bucket.BucketID, Key: key, Deleted: true}, nil
 }
@@ -2756,6 +2845,21 @@ func storageFilesystemMountCommand(record ports.StorageFilesystemRecord, ipAddre
 		IPAddress: ipAddress,
 		MountPath: mountPath,
 	}
+}
+
+// storageFilesystemMountCommandParts 反解本服务生成的挂载命令
+// （形如 `mount -t nfs <ip>:<export> <mount_path>`），用于落库命令回放时填充
+// ip_address/mount_path；格式不符时返回空值，不回显猜测值。
+func storageFilesystemMountCommandParts(command string) (string, string) {
+	fields := strings.Fields(command)
+	if len(fields) < 5 {
+		return "", ""
+	}
+	address := strings.SplitN(fields[3], ":", 2)
+	if len(address) != 2 || strings.TrimSpace(address[0]) == "" {
+		return "", ""
+	}
+	return address[0], fields[4]
 }
 
 func replaceFilesystemAttachment(items []ports.FilesystemAttachment, next ports.FilesystemAttachment) []ports.FilesystemAttachment {
