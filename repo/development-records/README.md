@@ -13,6 +13,12 @@
 
 ## 已完成批次（按完成时间排列）
 
+### occupancy 物理卡/逻辑卡口径修复（2026-09-24，live verified，分支 hotfix/gpu-occupancy-scope）
+
+| 批次 | 内容摘要 | 文件 |
+|---|---|---|
+| GPU-OCCUPANCY-CARD-COUNT-A | 用户报障 BOSS「GPU 资源池态势」统计卡「物理卡/逻辑卡」数据不对（`GET /gpu-inventory/occupancy` 返回 `physical_card_count=24`、`logical_card_count=96`）。集群真实拓扑：3 节点 × 2 张物理 4090（`nvidia.com/gpu.count=2` + register 注解 2 段）× 每卡 4 切片 = **物理 6 / 逻辑 24**。根因：`gpuNodeClassesFromKubernetesNodeList` 为 vGPU 节点生成的**设备记录是切片粒度**（每记录携带 `Shares=每卡切分数`），而 `gpuOccupancyFromNodes` 按「每条设备记录即一张物理卡」统计——`PhysicalCardCount` 每记录 +1（=切片数 24）、`LogicalCardCount` 每记录 +Shares（=切片数×每卡切分数 96，双重计数）；该假设对整卡节点成立、对 vGPU 节点不成立，且契约 `v1.yaml` description「与设备记录数同口径」把错误口径固化（GPU-POOL-SURFACE-A live 验证只核对字段出现未核对语义）。修复：① `ports.GPUNodeClass` 新增 `PhysicalCards`（节点级去重物理卡数，adapter 派生：vGPU 注解路径=注解段数、整卡路径=记录数，0=未提供回退记录数）；② adapter 两条路径派生（注解路径 `len(cardShares)`；无注解回退=整卡记录数+vgpu 记录数+volcano 切片按 `gpu.count` label 归组）；③ router occupancy 物理卡优先累加 `node.PhysicalCards`、逻辑卡改为每记录 +1（=整卡+切片合计，恒等于 total，不再按 Shares 累加）；④ contract-first 修正 v1.yaml 两处 description（生成器不携带属性描述文本，SDK/docs 生成物经幂等校验零漂移）。响应 schema 形状零变更、无 DB 迁移。单测：adapter 三路径派生用例 + router 口径用例（3×vGPU[2卡×4切片]+1×整卡 → Physical=8/Logical=26，错误实现 26/98）。门禁：validate_openapi_spec / SDK+docs 生成幂等 / validate_component_imports / validate_inference_legacy_control_plane / validate_gateway_authz_drift(no drift) / validate_core_gateway_authz_routes(324 路由 0 error) / validate_doc_entrypoints / git diff --check 全绿。**live 验证 PASS**（ani-test2，镜像 `dev-20260924-gpu-card-count`）：`physical_card_count 24→6`、`logical_card_count 96→24`，`total/vgpu_count/in_use/available`（24/24/7/17）与 `/platform/capacity gpu_free=17` 不变；经 BOSS 前端 30087 代理链路复核一致。部署插曲：构建脚本 tag 替换失配致新产物一度覆盖无环境在跑的旧 tag `dev-20260923-gpu-occupancy-scope`（无实际影响），已补打正确 tag 并部署。遗留：无注解回退路径对 nvidia.com/vgpu 记录按 1 卡/条保守计（无法还原卡分组）；ani-system 未部署本批次（被 metering 改动线覆盖，待 PR #184 合入后从 main 统一构建） | gpu-occupancy-card-count-a.md |
+
 ### GPU 占用口径统一与 30080 台账迁移补齐（2026-09-23，live verified，分支 hotfix/gpu-occupancy-scope）
 
 | 批次 | 内容摘要 | 文件 |
