@@ -432,7 +432,7 @@ func (q *PostgresQuota) List(ctx context.Context, req ports.QuotaListRequest) (p
 			JOIN tenants t ON t.id = rq.tenant_id
 			WHERE t.status IN ('active', 'frozen')
 			  AND ($1 = '' OR rq.tenant_id > $1::uuid)
-			ORDER BY rq.tenant_id
+			ORDER BY rq.tenant_id::text
 			LIMIT $2
 		`, req.Cursor, limit+1)
 		if err != nil {
