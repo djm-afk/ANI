@@ -401,13 +401,13 @@ func (o *LocalInstanceOrchestrator) persistWithQuotaTransition(ctx context.Conte
 // the outbox event_type (plan.md §6.3.2 conventions). Empty string means the
 // transition carries no lifecycle event (e.g. provisioning → provisioning).
 func orchestratorTransitionOutboxEvent(previous, next ports.WorkloadState) string {
-	switch {
-	case next == ports.WorkloadStateRunning:
+	switch next {
+	case ports.WorkloadStateRunning:
 		if previous == ports.WorkloadStateFailed {
 			return "instance.retried"
 		}
 		return "instance.confirmed"
-	case next == ports.WorkloadStateFailed:
+	case ports.WorkloadStateFailed:
 		return "instance.cancelled"
 	default:
 		return ""
