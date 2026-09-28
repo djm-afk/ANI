@@ -70,23 +70,40 @@ func TestKubernetesLifecycleExecutorUsesKubeVirtStartStopSubresources(t *testing
 	}
 }
 
-func TestKubernetesLifecycleExecutorHotplugsPVCIntoKubeVirtVM(t *testing.T) {
-	var gotPath string
-	var gotBody string
+func TestKubernetesLifecycleExecutorAttachVolumeRunningVMStopsAppliesStarts(t *testing.T) {
+	var requests []string
+	var vmGets int
+	var patchBody string
 	executor := newTestLifecycleExecutor(t, func(r *http.Request) (*http.Response, error) {
-		gotPath = r.URL.Path
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("read request body: %v", err)
+		requests = append(requests, r.Method+" "+r.URL.Path)
+		switch {
+		case r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/virtualmachines/vm-01"):
+			body, _ := io.ReadAll(r.Body)
+			patchBody = string(body)
+			return lifecycleResponse(), nil
+		case r.Method == http.MethodGet && strings.Contains(r.URL.Path, "/virtualmachines/vm-01"):
+			vmGets++
+			switch vmGets {
+			case 1: // running check
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body:       io.NopCloser(strings.NewReader(`{"status":{"printableStatus":"Running"}}`)),
+				}, nil
+			case 2: // wait-stopped poll
+				return lifecycleVMStoppedResponse(), nil
+			default: // spec capture
+				return &http.Response{
+					StatusCode: http.StatusOK,
+					Header:     http.Header{"Content-Type": []string{"application/json"}},
+					Body: io.NopCloser(strings.NewReader(`{"metadata":{"name":"vm-01","namespace":"ani-tenant-tenant-a"},` +
+						`"spec":{"running":false,"template":{"spec":{"domain":{"devices":{"disks":[{"name":"containerdisk","disk":{"bus":"virtio"}}]}},` +
+						`"volumes":[{"name":"containerdisk","containerDisk":{"image":"rocky:10"}}]}}}}`)),
+				}, nil
+			}
+		default:
+			return lifecycleResponse(), nil
 		}
-		gotBody = string(body)
-		if r.Method != http.MethodPut {
-			t.Fatalf("method = %s, want PUT", r.Method)
-		}
-		if r.Header.Get("Content-Type") != "application/json" {
-			t.Fatalf("content type = %q, want application/json", r.Header.Get("Content-Type"))
-		}
-		return lifecycleResponse(), nil
 	})
 	record := lifecycleRecord()
 	record.Kind = ports.WorkloadKindVM
@@ -104,32 +121,52 @@ func TestKubernetesLifecycleExecutorHotplugsPVCIntoKubeVirtVM(t *testing.T) {
 	if !result.Accepted {
 		t.Fatalf("Accepted = false, reason = %s", result.Reason)
 	}
-	if gotPath != "/apis/subresources.kubevirt.io/v1/namespaces/ani-tenant-tenant-a/virtualmachines/vm-01/addvolume" {
-		t.Fatalf("path = %q, want VM addvolume subresource", gotPath)
+	// The volume is attached by rewriting the VM spec around a stop/start: the
+	// KubeVirt addvolume subresource leaves a hotpluggable entry whose disk.img
+	// is never created, so the guest never sees the disk.
+	want := []string{
+		"GET /apis/kubevirt.io/v1/namespaces/ani-tenant-tenant-a/virtualmachines/vm-01",
+		"PUT /apis/subresources.kubevirt.io/v1/namespaces/ani-tenant-tenant-a/virtualmachines/vm-01/stop",
+		"GET /apis/kubevirt.io/v1/namespaces/ani-tenant-tenant-a/virtualmachines/vm-01",
+		"GET /apis/kubevirt.io/v1/namespaces/ani-tenant-tenant-a/virtualmachines/vm-01",
+		"PATCH /apis/kubevirt.io/v1/namespaces/ani-tenant-tenant-a/virtualmachines/vm-01",
+		"PUT /apis/subresources.kubevirt.io/v1/namespaces/ani-tenant-tenant-a/virtualmachines/vm-01/start",
 	}
-	for _, want := range []string{
+	if strings.Join(requests, "\n") != strings.Join(want, "\n") {
+		t.Fatalf("requests = %#v, want stop-apply-start sequence %#v", requests, want)
+	}
+	for _, wantBody := range []string{
 		`"name":"volume-vol-eec81c75-9204-419f-a7c9-00602812959c"`,
 		`"disk":{"bus":"virtio"}`,
-		`"claimName":"vol-vol-eec81c75-9204-419f-a7c9-00602812959c"`,
-		`"readOnly":true`,
+		`"persistentVolumeClaim":{"claimName":"vol-vol-eec81c75-9204-419f-a7c9-00602812959c","readOnly":true}`,
+		`"containerDisk":{"image":"rocky:10"}`,
 	} {
-		if !strings.Contains(gotBody, want) {
-			t.Fatalf("body = %s, want %s", gotBody, want)
+		if !strings.Contains(patchBody, wantBody) {
+			t.Fatalf("re-apply manifest = %s, want %s", patchBody, wantBody)
 		}
+	}
+	if strings.Contains(patchBody, "hotpluggable") {
+		t.Fatalf("re-apply manifest must not mark the volume hotpluggable: body = %s", patchBody)
 	}
 }
 
-func TestKubernetesLifecycleExecutorRemovesAttachedKubeVirtVMVolumeByAttachmentName(t *testing.T) {
-	var gotPath string
-	var gotBody string
+func TestKubernetesLifecycleExecutorDetachVolumeRemovesDiskAndVolumeEntries(t *testing.T) {
+	var patchBody string
 	executor := newTestLifecycleExecutor(t, func(r *http.Request) (*http.Response, error) {
-		gotPath = r.URL.Path
-		body, err := io.ReadAll(r.Body)
-		if err != nil {
-			t.Fatalf("read request body: %v", err)
+		if r.Method == http.MethodPatch && strings.Contains(r.URL.Path, "/virtualmachines/vm-01") {
+			body, _ := io.ReadAll(r.Body)
+			patchBody = string(body)
+			return lifecycleResponse(), nil
 		}
-		gotBody = string(body)
-		return lifecycleResponse(), nil
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Header:     http.Header{"Content-Type": []string{"application/json"}},
+			Body: io.NopCloser(strings.NewReader(`{"metadata":{"name":"vm-01","namespace":"ani-tenant-tenant-a"},` +
+				`"spec":{"running":false,"template":{"spec":{"domain":{"devices":{"disks":[{"name":"containerdisk","disk":{"bus":"virtio"}},` +
+				`{"name":"existing-data-disk","disk":{"bus":"virtio"}}]}},` +
+				`"volumes":[{"name":"containerdisk","containerDisk":{"image":"rocky:10"}},` +
+				`{"name":"existing-data-disk","persistentVolumeClaim":{"claimName":"vol-vol_data_a"}}]}}}}`)),
+		}, nil
 	})
 	record := lifecycleRecord()
 	record.Kind = ports.WorkloadKindVM
@@ -149,11 +186,13 @@ func TestKubernetesLifecycleExecutorRemovesAttachedKubeVirtVMVolumeByAttachmentN
 	if !result.Accepted {
 		t.Fatalf("Accepted = false, reason = %s", result.Reason)
 	}
-	if gotPath != "/apis/subresources.kubevirt.io/v1/namespaces/ani-tenant-tenant-a/virtualmachines/vm-01/removevolume" {
-		t.Fatalf("path = %q, want VM removevolume subresource", gotPath)
+	// Detach rewrites the spec too: the attachment name recorded on the
+	// instance must still locate the volume and disk entries attach wrote.
+	if strings.Contains(patchBody, "existing-data-disk") {
+		t.Fatalf("re-apply manifest still contains the detached volume: body = %s", patchBody)
 	}
-	if gotBody != `{"name":"existing-data-disk"}` {
-		t.Fatalf("body = %s, want existing attachment name", gotBody)
+	if !strings.Contains(patchBody, `"containerDisk":{"image":"rocky:10"}`) {
+		t.Fatalf("re-apply manifest dropped existing volumes: body = %s", patchBody)
 	}
 }
 

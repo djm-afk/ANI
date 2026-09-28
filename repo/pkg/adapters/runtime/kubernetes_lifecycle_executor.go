@@ -193,6 +193,15 @@ func (e *KubernetesLifecycleExecutor) Apply(ctx context.Context, request ports.W
 	}, nil
 }
 
+// applyKubeVirtVolume attaches/detaches a block-storage volume to a VM by
+// rewriting the VM spec (stop → rewrite → start) instead of the KubeVirt
+// addvolume subresource. ANI volumes are filesystem-mode PVCs, and KubeVirt
+// only creates the disk.img a filesystem PVC needs at VM start
+// (pkg/host-disk ReplacePVCByHostDisk + createSparseRaw); the hotplug path
+// instead looks for an already existing disk.img and therefore fails forever
+// on a freshly provisioned volume. The rewritten entry is a plain
+// (non-hotpluggable) PVC disk so the start path creates disk.img; detach
+// removes the volume and disk entries this attach wrote.
 func (e *KubernetesLifecycleExecutor) applyKubeVirtVolume(ctx context.Context, request ports.WorkloadInstanceLifecycleRequest, record ports.WorkloadInstanceRecord) error {
 	if record.Kind != ports.WorkloadKindVM {
 		return fmt.Errorf("%w: Kubernetes volume lifecycle execution is only supported for vm instances", ports.ErrUnsupported)
@@ -205,36 +214,96 @@ func (e *KubernetesLifecycleExecutor) applyKubeVirtVolume(ctx context.Context, r
 	if volumeID == "" {
 		return fmt.Errorf("%w: volume_id is required for KubeVirt volume lifecycle execution", ports.ErrInvalid)
 	}
-	volumeName := kubeVirtVolumeName(record, volumeID)
-	var body []byte
-	switch request.Action {
-	case ports.WorkloadLifecycleAttachVolume:
-		body, err = json.Marshal(map[string]any{
-			"name": volumeName,
-			"disk": map[string]any{
-				"disk": map[string]any{"bus": "virtio"},
-			},
-			"volumeSource": map[string]any{
-				"persistentVolumeClaim": map[string]any{
-					"claimName": storageProviderName("vol", volumeID),
-					"readOnly":  request.ReadOnly != nil && *request.ReadOnly,
-				},
-			},
-		})
-	case ports.WorkloadLifecycleDetachVolume:
-		body, err = json.Marshal(map[string]any{"name": volumeName})
-	default:
+	attach := request.Action == ports.WorkloadLifecycleAttachVolume
+	if !attach && request.Action != ports.WorkloadLifecycleDetachVolume {
 		return fmt.Errorf("%w: unsupported KubeVirt volume lifecycle action %q", ports.ErrUnsupported, request.Action)
 	}
+	volumeName := kubeVirtVolumeName(record, volumeID)
+	claimName := storageProviderName("vol", volumeID)
+	readOnly := request.ReadOnly != nil && *request.ReadOnly
+	return e.applyKubeVirtVMSpecMutation(ctx, resource, "volume "+string(request.Action), func(spec map[string]any) {
+		applyKubeVirtVolumeMutation(spec, volumeName, claimName, readOnly, attach)
+	})
+}
+
+// applyKubeVirtVMSpecMutation stops a running VM, rewrites its spec through
+// mutate, re-applies the spec (server-side apply with force) and starts the VM
+// again when it was running. KubeVirt only materialises a filesystem PVC's
+// disk.img while the VM is starting, so volume changes cannot go through the
+// hotplug subresource. The flow runs detached from the request context (same
+// as rollback/rebuild) so a client disconnect cannot leave the VM stopped, and
+// every failure after the stop makes a best-effort attempt to power the VM
+// back on.
+func (e *KubernetesLifecycleExecutor) applyKubeVirtVMSpecMutation(ctx context.Context, vm kubernetesResource, action string, mutate func(spec map[string]any)) error {
+	ctx = context.WithoutCancel(ctx)
+	wasRunning := false
+	if running, err := e.kubeVirtVMRunning(ctx, vm); err == nil && running {
+		wasRunning = true
+		if err := e.stop(ctx, vm); err != nil {
+			return fmt.Errorf("stop VM %q before %s: %w", vm.Name, action, err)
+		}
+		if err := e.waitKubeVirtVMStopped(ctx, vm); err != nil {
+			// Best-effort: try to power the VM back on before surfacing
+			// the wait failure, otherwise it stays stopped.
+			if startErr := e.start(ctx, vm); startErr != nil {
+				return fmt.Errorf("%w (VM %q left stopped: start after wait failure also failed: %v)", err, vm.Name, startErr)
+			}
+			return err
+		}
+	}
+	// Anything that fails after the stop above would otherwise leave a
+	// previously running VM powered off; best-effort restore before returning.
+	restoreRunning := func(cause error) error {
+		if !wasRunning {
+			return cause
+		}
+		if startErr := e.start(ctx, vm); startErr != nil {
+			return fmt.Errorf("%w (VM %q left stopped: start after failure also failed: %v)", cause, vm.Name, startErr)
+		}
+		return cause
+	}
+	body, err := e.client.do(ctx, http.MethodGet, e.client.resourceURL(vm, ""), "", nil)
 	if err != nil {
-		return fmt.Errorf("%w: marshal KubeVirt volume request: %v", ports.ErrInvalid, err)
+		return restoreRunning(fmt.Errorf("read VM %q spec for %s: %w", vm.Name, action, err))
 	}
-	subresource := "addvolume"
-	if request.Action == ports.WorkloadLifecycleDetachVolume {
-		subresource = "removevolume"
+	var doc map[string]any
+	if json.Unmarshal(body, &doc) != nil {
+		return restoreRunning(fmt.Errorf("%w: VM %q spec is not valid JSON", ports.ErrInvalid, vm.Name))
 	}
-	_, err = e.client.do(ctx, http.MethodPut, e.client.host+kubeVirtVMSubresourcePath(resource.Namespace, resource.Name, subresource), "application/json", body)
-	return err
+	spec, ok := doc["spec"].(map[string]any)
+	if !ok {
+		return restoreRunning(fmt.Errorf("%w: VM %q has no spec for %s", ports.ErrInvalid, vm.Name, action))
+	}
+	mutate(spec)
+	metadata := map[string]any{"name": vm.Name, "namespace": vm.Namespace}
+	if src, ok := doc["metadata"].(map[string]any); ok {
+		for _, key := range []string{"labels", "annotations"} {
+			if value, ok := src[key].(map[string]any); ok && len(value) > 0 {
+				metadata[key] = value
+			}
+		}
+	}
+	manifest, err := json.Marshal(map[string]any{
+		"apiVersion": "kubevirt.io/v1",
+		"kind":       "VirtualMachine",
+		"metadata":   metadata,
+		"spec":       spec,
+	})
+	if err != nil {
+		return restoreRunning(fmt.Errorf("%w: marshal VirtualMachine manifest for %s: %v", ports.ErrInvalid, action, err))
+	}
+	query := "fieldManager=" + url.QueryEscape(e.client.fieldManager) + "&force=true"
+	if _, err := e.client.do(ctx, http.MethodPatch, e.client.resourceURL(vm, query), kubernetesApplyPatchContentType, manifest); err != nil {
+		return restoreRunning(fmt.Errorf("apply VM %q spec for %s: %w", vm.Name, action, err))
+	}
+	// The stop above (when needed) left spec.running=false, so the explicit
+	// start owns power-on; a previously stopped VM stays stopped.
+	if wasRunning {
+		if err := e.start(ctx, vm); err != nil {
+			return fmt.Errorf("start VM %q after %s: %w", vm.Name, action, err)
+		}
+	}
+	return nil
 }
 
 // applyFilesystem routes filesystem attach/detach by workload kind: VMs take
@@ -408,75 +477,9 @@ func (e *KubernetesLifecycleExecutor) applyKubeVirtFilesystem(ctx context.Contex
 	volumeName := kubeVirtFilesystemVolumeName(filesystemID)
 	claimName := storageProviderName("fs", filesystemID)
 
-	ctx = context.WithoutCancel(ctx)
-	wasRunning := false
-	if running, err := e.kubeVirtVMRunning(ctx, vm); err == nil && running {
-		wasRunning = true
-		if err := e.stop(ctx, vm); err != nil {
-			return fmt.Errorf("stop VM %q before filesystem %s: %w", vm.Name, request.Action, err)
-		}
-		if err := e.waitKubeVirtVMStopped(ctx, vm); err != nil {
-			// Best-effort: try to power the VM back on before surfacing
-			// the wait failure, otherwise it stays stopped.
-			if startErr := e.start(ctx, vm); startErr != nil {
-				return fmt.Errorf("%w (VM %q left stopped: start after wait failure also failed: %v)", err, vm.Name, startErr)
-			}
-			return err
-		}
-	}
-	// Anything that fails after the stop above would otherwise leave a
-	// previously running VM powered off; best-effort restore before returning.
-	restoreRunning := func(cause error) error {
-		if !wasRunning {
-			return cause
-		}
-		if startErr := e.start(ctx, vm); startErr != nil {
-			return fmt.Errorf("%w (VM %q left stopped: start after failure also failed: %v)", cause, vm.Name, startErr)
-		}
-		return cause
-	}
-	body, err := e.client.do(ctx, http.MethodGet, e.client.resourceURL(vm, ""), "", nil)
-	if err != nil {
-		return restoreRunning(fmt.Errorf("read VM %q spec for filesystem %s: %w", vm.Name, request.Action, err))
-	}
-	var doc map[string]any
-	if json.Unmarshal(body, &doc) != nil {
-		return restoreRunning(fmt.Errorf("%w: VM %q spec is not valid JSON", ports.ErrInvalid, vm.Name))
-	}
-	spec, ok := doc["spec"].(map[string]any)
-	if !ok {
-		return restoreRunning(fmt.Errorf("%w: VM %q has no spec for filesystem %s", ports.ErrInvalid, vm.Name, request.Action))
-	}
-	applyKubeVirtFilesystemMutation(spec, volumeName, claimName, attach)
-	metadata := map[string]any{"name": vm.Name, "namespace": vm.Namespace}
-	if src, ok := doc["metadata"].(map[string]any); ok {
-		for _, key := range []string{"labels", "annotations"} {
-			if value, ok := src[key].(map[string]any); ok && len(value) > 0 {
-				metadata[key] = value
-			}
-		}
-	}
-	manifest, err := json.Marshal(map[string]any{
-		"apiVersion": "kubevirt.io/v1",
-		"kind":       "VirtualMachine",
-		"metadata":   metadata,
-		"spec":       spec,
+	return e.applyKubeVirtVMSpecMutation(ctx, vm, "filesystem "+string(request.Action), func(spec map[string]any) {
+		applyKubeVirtFilesystemMutation(spec, volumeName, claimName, attach)
 	})
-	if err != nil {
-		return restoreRunning(fmt.Errorf("%w: marshal VirtualMachine manifest for filesystem %s: %v", ports.ErrInvalid, request.Action, err))
-	}
-	query := "fieldManager=" + url.QueryEscape(e.client.fieldManager) + "&force=true"
-	if _, err := e.client.do(ctx, http.MethodPatch, e.client.resourceURL(vm, query), kubernetesApplyPatchContentType, manifest); err != nil {
-		return restoreRunning(fmt.Errorf("apply VM %q spec for filesystem %s: %w", vm.Name, request.Action, err))
-	}
-	// The stop above (when needed) left spec.running=false, so the explicit
-	// start owns power-on; a previously stopped VM stays stopped.
-	if wasRunning {
-		if err := e.start(ctx, vm); err != nil {
-			return fmt.Errorf("start VM %q after filesystem %s: %w", vm.Name, request.Action, err)
-		}
-	}
-	return nil
 }
 
 // kubeVirtFilesystemVolumeName derives the KubeVirt volume/filesystem device
@@ -535,6 +538,55 @@ func applyKubeVirtFilesystemMutation(spec map[string]any, volumeName string, cla
 		})
 	}
 	devices["filesystems"] = filesystems
+}
+
+// applyKubeVirtVolumeMutation rewrites the VM pod template in place, replacing
+// any prior entry for the volume so repeated attach/detach calls are
+// idempotent. The volume is declared as a plain PVC-backed virtio disk and
+// deliberately never carries the hotpluggable flag: KubeVirt skips disk.img
+// creation for hotplug volumes (host-disk shouldSkipVolumeSource), so a
+// hotpluggable entry would leave the guest without the disk after the restart.
+func applyKubeVirtVolumeMutation(spec map[string]any, volumeName string, claimName string, readOnly bool, attach bool) {
+	tmpl, ok := spec["template"].(map[string]any)
+	if !ok {
+		tmpl = map[string]any{}
+		spec["template"] = tmpl
+	}
+	podSpec, ok := tmpl["spec"].(map[string]any)
+	if !ok {
+		podSpec = map[string]any{}
+		tmpl["spec"] = podSpec
+	}
+	volumes := kubeVirtRemoveNamedEntry(asAnySlice(podSpec["volumes"]), volumeName)
+	if attach {
+		source := map[string]any{"claimName": claimName}
+		if readOnly {
+			source["readOnly"] = true
+		}
+		volumes = append(volumes, map[string]any{
+			"name":                  volumeName,
+			"persistentVolumeClaim": source,
+		})
+	}
+	podSpec["volumes"] = volumes
+	domain, ok := podSpec["domain"].(map[string]any)
+	if !ok {
+		domain = map[string]any{}
+		podSpec["domain"] = domain
+	}
+	devices, ok := domain["devices"].(map[string]any)
+	if !ok {
+		devices = map[string]any{}
+		domain["devices"] = devices
+	}
+	disks := kubeVirtRemoveNamedEntry(asAnySlice(devices["disks"]), volumeName)
+	if attach {
+		disks = append(disks, map[string]any{
+			"name": volumeName,
+			"disk": map[string]any{"bus": "virtio"},
+		})
+	}
+	devices["disks"] = disks
 }
 
 func asAnySlice(value any) []any {
