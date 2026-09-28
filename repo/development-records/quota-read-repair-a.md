@@ -62,10 +62,11 @@ vGPU 切片规格 `rtx4090-12g-4` 实例 E2E：
 
 对照修复前同环境同用例：running 后 used=0/reserved=1 停留、outbox 0 条、删除仅 Cancel。测试实例已清理，tenant-a 台账归零，无泄漏流水。
 
-## 6. 遗留
+## 6. 遗留与 ani-system 统一部署（2026-09-28 补记）
 
 1. C（gpu-inventory 占用口径四缺陷）已由后续批次 GPU-OCCUPANCY-PODCOUNT-A 修复可修部分（多卡计数 + 分段回显，见 `gpu-occupancy-podcount-a.md`）；精确绑卡需 planning 持久化 device index 或读 device plugin 分配信息，仍为独立批次；
-2. ani-system 未部署本批次镜像（当前被 `emailfix-20260928` 改动线覆盖，需协调并集）；reconcile-worker 仍缺 `GPU_QUOTA_ENABLED` 与新镜像；
-3. `PROVISIONING_TIMEOUT_MIN` 未配置时代码不启用超时兜底（`cfg.ProvisioningTimeoutMin > 0` 才挂 `WithProvisioningTimeoutMin`），provisioning 卡死无保护，建议两环境配置；
-4. 存量实例 `audit_id` 为空导致 reconcile 校验失败（旧 sandbox 记录），未处理；
-5. 预留 10 分钟 TTL 仍无清扫者（`expires_at` 无 sweeper），悬挂预留依赖人工/超时兜底。
+2. **ani-system 统一部署（2026-09-28 完成）**：gateway → `test2-20260928-occupancy-podcount`（含三批次）+ `PROVISIONING_TIMEOUT_MIN=10`；reconcile-worker-a/b → 新镜像 `dev-20260928-quota-readrepair` + `GPU_QUOTA_ENABLED=true` + `PROVISIONING_TIMEOUT_MIN=10` + `WORKLOAD_RECONCILE_MAX_BATCH=100`；task-service/metering-service 维持 `dev-20260924-metering-events`。验证：平台 occupancy in_use=12 与 kubectl 真值一致、capacity gpu_free=12 同口径；tenant-a TCC E2E 全闭环（Try→running→Confirm（confirmed + `instance.confirmed`）→删除→released/`instance.deleted`）；部署前他人新建的 2 个 recheck 实例的泄漏 reserved 由 worker selfHealConfirm 自动补确认（used=3/reserved=0 与 3 个 running Pod 对齐）。**注意**：部署期间 `anisys-20260928-kaiwu.1` 改动线两次覆盖 gateway 镜像（本批次最终回填，kaiwu 镜像 tag 保留可回滚，两线需合并协调）；
+3. **reconcile 循环批次饥饿（新发现，已缓解）**：`ListReconcileTargets` 固定 `Limit=MaxConcurrentReconciles`（默认 10）+ 无游标推进，ani-system 存量毒记录（`audit_id` 空/缺 resource_refs 的旧实例）reconcile 失败不更新 `updated_at`，永久占据首批 → 新实例永不进 reconcile。已用 `WORKLOAD_RECONCILE_MAX_BATCH=100` 缓解；根治（失败退避后推进游标/毒记录隔离）待独立批次；
+4. **reconcile-worker Dockerfile 修复**：原 `GOWORK=off` 单模块构建因 `pkg/bootstrap` 新增 runtimeadmin 依赖而失败（workspace 模式掩盖了 go.mod 缺项），改为对齐 gateway 的 `go work init` workspace 模式 + 补 `GOPROXY`；
+5. `PROVISIONING_TIMEOUT_MIN` 已在 ani-system gateway/workers 配置为 10；ani-test2 未配；
+6. 存量实例 `audit_id` 为空导致 reconcile 校验失败（旧 sandbox 记录），未处理；预留 10 分钟 TTL 仍无 sweeper。

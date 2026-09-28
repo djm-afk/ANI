@@ -57,4 +57,4 @@
 
 1. 精确绑卡：需调度结果回写机制（Pod 分配的设备 ID 落库/落注解后回显真实卡位），独立批次；
 2. 共节点多实例的分段分配在「同一 Pod 组内多卡」场景仍无法区分具体卡位（本身无信息源）；
-3. ani-system 未部署（与 QUOTA-READ-REPAIR-A 同批协调）。
+3. ani-system 已随 2026-09-28 统一部署覆盖（gateway 同镜像，详见 `quota-read-repair-a.md` §6）。
