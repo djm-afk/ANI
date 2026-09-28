@@ -31,6 +31,7 @@ type storageCreateVolumeRequest struct {
 	StorageClass    string `json:"storage_class"`
 	Zone            string `json:"zone,omitempty"`
 	VolumeType      string `json:"volume_type,omitempty"`
+	VolumeMode      string `json:"volume_mode,omitempty"`
 	Encrypted       bool   `json:"encrypted,omitempty"`
 	MountInstanceID string `json:"mount_instance_id,omitempty"`
 	MountRoute      string `json:"mount_route,omitempty"`
@@ -211,6 +212,7 @@ type storageVolumeResponse struct {
 	StorageClass     string                              `json:"storage_class"`
 	Zone             string                              `json:"zone,omitempty"`
 	VolumeType       string                              `json:"volume_type,omitempty"`
+	VolumeMode       string                              `json:"volume_mode,omitempty"`
 	IOPS             int                                 `json:"iops,omitempty"`
 	Encrypted        bool                                `json:"encrypted,omitempty"`
 	MountInstanceID  string                              `json:"mount_instance_id,omitempty"`
@@ -629,6 +631,7 @@ func (api *storageAPI) createVolume(ctx context.Context, c *app.RequestContext) 
 		Name:           req.Name,
 		SizeGiB:        req.SizeGiB,
 		StorageClass:   req.StorageClass,
+		VolumeMode:     req.VolumeMode,
 	})
 	if err != nil {
 		writeStorageError(c, err)
@@ -1452,6 +1455,7 @@ func storageVolumeFromRecord(record ports.StorageVolumeRecord) storageVolumeResp
 		StorageClass:    record.StorageClass,
 		Zone:            record.Zone,
 		VolumeType:      record.VolumeType,
+		VolumeMode:      record.VolumeMode,
 		IOPS:            record.IOPS,
 		Encrypted:       record.Encrypted,
 		MountInstanceID: record.MountInstanceID,

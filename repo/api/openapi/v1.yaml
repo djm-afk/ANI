@@ -2707,6 +2707,7 @@ components:
         storage_class: { type: string }
         zone:          { type: string, nullable: true }
         volume_type:   { type: string, enum: [ssd, hdd, high_performance_ssd], nullable: true }
+        volume_mode:   { type: string, enum: [block, filesystem], nullable: true }
         iops:          { type: integer, minimum: 0, nullable: true }
         encrypted:     { type: boolean, nullable: true }
         mount_instance_id: { type: string, nullable: true }
@@ -2854,9 +2855,10 @@ components:
         idempotency_key: { type: string, minLength: 1, maxLength: 128, description: "客户端生成；同一 tenant_id 下 24 小时内去重" }
         name:            { type: string, minLength: 1, maxLength: 128 }
         size_gib:        { type: integer, format: int64, minimum: 1 }
-        storage_class:   { type: string, default: standard }
+        storage_class:   { type: string, default: ani-block }
         zone:            { type: string }
         volume_type:     { type: string, enum: [ssd, hdd, high_performance_ssd], default: ssd }
+        volume_mode:     { type: string, enum: [block, filesystem], default: filesystem, description: "卷的 Kubernetes volumeMode。filesystem（默认）用于容器/GPU 容器按目录挂载；block 用于 VM 数据盘（裸设备在线热插）。volumeMode 不可变，创建后不能切换，VM 数据盘由服务端自动使用 block。" }
         encrypted:       { type: boolean, default: false }
         mount_instance_id: { type: string, nullable: true }
         mount_route:       { type: string, nullable: true }
