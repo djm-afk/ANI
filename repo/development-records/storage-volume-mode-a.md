@@ -2,6 +2,7 @@
 
 完成日期：2026-09-28
 对应 Sprint：Sprint 13/14 之间的实例/存储链路热修复（分支 `feat/volume-mode-block`）
+PR：[#195](https://github.com/e92nf872rp/ANI/pull/195)（`djm-afk:feat/volume-mode-block` → `e92nf872rp:main`）
 批次类型：**Feature batch**（新增契约字段 + 控制面能力 + DB 迁移，非 guard micro-batch）
 验证结果：`go build ./...`（`repo/pkg`、`repo/services/ani-gateway`）通过；`repo/pkg` 全量 `go test ./...` 仅既有 Windows sandbox symlink/python3 两用例环境性失败（与本批次无关），其余全绿；`gofmt -l` 无输出；`git diff --check` 通过；门禁脚本：`validate_openapi_spec`（2 spec OK）、`validate_core_api_compatibility`、`validate_storage_alpha_contract`、`validate_api_docs_contract`、`validate_spec_split_contract`、`validate_component_imports`、`validate_inference_legacy_control_plane`、`validate_gateway_authz_drift`（no drift）、`validate_core_gateway_authz_routes`（325 路由 / 251 registry / 0 error）、`validate_doc_entrypoints`、`validate_services_boundary`、SDK/API docs 生成幂等（零漂移）全通过；`atlas.sum` 按 Atlas 算法重算并校验一致。**live 验证 PASS（ani-test2，镜像 `test2-20260928-volumemode`），详见文末。**
 
