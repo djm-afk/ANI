@@ -13,6 +13,12 @@
 
 ## 已完成批次（按完成时间排列）
 
+### GPU 配额读修复旁路闭环：read-repair 委托 ReconcileNow（2026-09-28，live verified，分支 hotfix/metering-gpu-lifecycle-events，随 PR #191 评审）
+
+| 批次 | 内容摘要 | 文件 |
+|---|---|---|
+| QUOTA-READ-REPAIR-A | 用户报障 BOSS `/v1/quotas` 租户 `metering-e2e-20260924113158`「处理中」恒 1、已用数不对，及 `/v1/gpu-inventory` 占用对象/租户回显不对。**ani-system 实测三层根因**：① 配额 TCC 链路断裂——gateway `GPU_QUOTA_ENABLED=true` 执行 Try 而 reconcile 进程缺 quota 装配（worker 无开关、旧镜像），泄漏流水 `743a3dd8` 对应实例一直 running 且 `expires_at` 过期 3 天无人清扫，两条 confirmed 时间戳同毫秒证明是 e2e 手工补 Confirm；全平台 reserved 泄漏 2 条已数据修复（转 confirmed + reserved→used 转账，泄漏清零）；② **读修复旁路（本批次核心）**：`refreshOneStoreStatus`/`refreshOneVMStoreStatus` 用裸 `UpsertStatus` 落库 live 观测状态，绕过 TCC 与 outbox，且 reconcile 循环 `ListReconcileTargets` 只捞 `updated_at` 早于 StaleThreshold 的实例、Console/BOSS 轮询持续刷新 `updated_at` 使实例永不进 reconcile 列表——两条收口路径全部失效（ani-test2 复现：spec_id 实例 running 后 used=0/reserved=1 停留、outbox 0 条）；③ gpu-inventory 占用口径四缺陷（按索引猜卡、平台视角 fallback demo-tenant、不过滤非 GPU Pod（vGPU 资源是 `volcano.sh/vgpu-number`）、1 Pod=1 卡少算），实测确认未修待独立批次。**修复（方案 A）**：`InstanceRuntime` 新增 `ReconcileController` 注入，新增 `commitReadRepairTransition`——read-repair 检测到状态转换且 `QuotaTxIDs` 非空时委托 `ReconcileNow`（applyStateTransition 矩阵：Confirm/Cancel+Release/双调 + outbox 同事务，完整复用 METERING-LIFECYCLE-EVENTS-A 语义），三处 UpsertStatus 点接入，委托失败 WARN 回退裸写，无 QuotaTxIDs 实例零行为变化。单测 +4（委托/不委托/failed 委托/VM 路径）。门禁：go vet + gateway 全量测试 + gofumpt 全绿。**live 验证 PASS（ani-test2 30083，镜像 `test2-20260928-quota-readrepair` = PR #191 六层修复 + 本批次，`GPU_QUOTA_ENABLED=true`）**：vGPU 规格（`rtx4090-12g-4`）实例 Try→reserved/reserved=1 → **GET 轮询见 running → Confirm（流水 confirmed、used=1/reserved=0、`instance.confirmed published=t`）** → 删除 → released/used=0/`instance.deleted published=t`，全闭环；修复前同用例 running 后 used=0/reserved=1 停留且 outbox 0 条。遗留：占用口径四缺陷待独立批次；ani-system 未部署（被 `emailfix-20260928` 改动线覆盖需协调）且 reconcile-worker 仍缺开关与新镜像；`PROVISIONING_TIMEOUT_MIN` 未配置则超时兜底不生效；存量实例 `audit_id` 空 reconcile 校验失败未处理；预留 10 分钟 TTL 仍无 sweeper。记录：`development-records/quota-read-repair-a.md` | quota-read-repair-a.md |
+
 ### /quotas 配额列表过滤已禁用租户（2026-09-24，live verified，分支 hotfix/gpu-occupancy-scope，随 PR #185 评审合并）
 
 | 批次 | 内容摘要 | 文件 |
