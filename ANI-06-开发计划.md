@@ -27,6 +27,8 @@
 
 > **QUOTA-READ-REPAIR-A（2026-09-28，live verified）：** 闭合上条遗留「创建 confirmed 事件被详情轮询 live 状态合成抢先绕过」，并修复用户报障 BOSS `/v1/quotas` 租户「处理中」恒 1、已用数不对。根因：gateway 读修复路径（`refreshOneStoreStatus`/`refreshOneVMStoreStatus`）用裸 `UpsertStatus` 落库 live 观测状态，绕过配额 TCC（Confirm/Cancel/Release）与 outbox；且 reconcile 循环只捞 `updated_at` 早于 StaleThreshold 的实例，Console/BOSS 轮询持续刷新 `updated_at` 使实例永不进 reconcile 列表，两条收口路径全部失效（ani-system 全平台实测 reserved 泄漏 2 条，已数据修复清零）。修复：read-repair 检测到生命周期转换且 `QuotaTxIDs` 非空时委托 `ReconcileNow`（TCC + outbox + 状态写入同租户事务），无配额实例零行为变化；单测 +4。live 验证 PASS（ani-test2，镜像 `test2-20260928-quota-readrepair`）：Try→running 轮询→Confirm（used=1/reserved=0/`instance.confirmed published=t`）→删除→Release（used=0/`instance.deleted published=t`）全闭环。遗留：gpu-inventory 占用口径四缺陷（按索引猜卡/平台视角 fallback/不过滤非 GPU Pod/1 Pod=1 卡）待独立批次；ani-system 部署与 reconcile-worker 开关需协调；预留 TTL 无 sweeper。记录：[`repo/development-records/quota-read-repair-a.md`](repo/development-records/quota-read-repair-a.md)。
 
+> **GPU-OCCUPANCY-PODCOUNT-A（2026-09-28，live verified）：** 修复 `/v1/gpu-inventory` 实例占用对象/租户回显不对（闭合上条遗留四缺陷中可修部分；②非 GPU Pod 过滤、③平台视角 fallback 已由 PR #184 修复；①精确绑卡实测确认不可行——Pod 对象无设备分配信息，需调度结果回写独立批次）。修复：占用数量口径改为按 Pod 请求 GPU 数量累计（多卡 Pod 占多台设备，platform capacity 与 occupancy 双侧同步保持同口径）+ 设备级回显按实例名稳定排序逐 Pod 分段分配（多实例共节点不再全归一个实例）。无契约/迁移/生成物变更。live 验证 PASS（ani-test2，镜像 `test2-20260928-occupancy-podcount`）：真值复算 in_use=12，平台 occupancy 24/12/12 与 capacity gpu_free=12 一致，tenant-a in_use=7，六台 in_use 分段回显 4 实例×3 租户，CPU Pod 零回归。遗留：精确绑卡需调度结果回写独立批次。记录：[`repo/development-records/gpu-occupancy-podcount-a.md`](repo/development-records/gpu-occupancy-podcount-a.md)。
+
 ### 文档职责
 
 | 文档 | 职责 | 使用时机 |

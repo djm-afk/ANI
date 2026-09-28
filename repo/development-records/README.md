@@ -13,6 +13,12 @@
 
 ## 已完成批次（按完成时间排列）
 
+### GPU 占用数量口径与多实例分段回显（2026-09-28，live verified，分支 hotfix/metering-gpu-lifecycle-events，随 PR #191 评审）
+
+| 批次 | 内容摘要 | 文件 |
+|---|---|---|
+| GPU-OCCUPANCY-PODCOUNT-A | 闭合 QUOTA-READ-REPAIR-A 遗留的占用口径四缺陷中可修部分（②③已由 #184 修复；**①精确绑卡经实测确认不可行**——运行中 Pod 对象无设备分配信息，`volcano.sh/devices-to-allocate` 为空，需调度结果回写机制独立批次）。**修复**：① 多卡 Pod 少算——`GPUPodOccupancyRecord` 新增 `GPUCount`（`podGPUCount` 跨容器 limits 之和，解析失败保守按 1），platform capacity `runningGPUPodCountsByNode` 与 gateway occupancy 设备标记双侧同步改为按数量累计（保持 `/platform/capacity` gpu_free 与 `/gpu-inventory/occupancy` available 同口径）；② 回显对象任意——`gpuNodeOccupancyEntry` 新增按实例名稳定排序的 `Pods` 列表，设备级 `instance_id`/`tenant_id` 回显按 Pods 顺序逐段分配各自 GPUCount，多实例共节点不再把全部 in_use 归到字典序最小的一个实例名（真实归属来自 Pod 的 tenant-id label，平台视角跨租户即真实租户）。无契约/DB 迁移/生成物变更；单测 +5（parser 数量口径 2 + 聚合排序 1 + 分段回显 1 + 端到端携带 1，实为 4 函数 6 断言组），既有 3 处夹具同步。**live 验证 PASS（ani-test2 30083，镜像 `test2-20260928-occupancy-podcount`）**：真值独立复算 12 GPU Pod × 1 卡 = in_use 12；平台 occupancy **24/12/12**、capacity **gpu_free=12** 两接口一致；tenant-a occupancy in_use=7（仅本租户）；设备级回显 dev-phys-02 六台 in_use 分属 4 实例 × 3 租户（修复前全归一个实例）；CPU-only Pod 零回归。遗留：精确绑卡需调度结果回写（独立批次）；同 Pod 组内多卡无法区分具体卡位（无信息源）；ani-system 未部署（与 QUOTA-READ-REPAIR-A 同批协调）。记录：`development-records/gpu-occupancy-podcount-a.md` | gpu-occupancy-podcount-a.md |
+
 ### GPU 配额读修复旁路闭环：read-repair 委托 ReconcileNow（2026-09-28，live verified，分支 hotfix/metering-gpu-lifecycle-events，随 PR #191 评审）
 
 | 批次 | 内容摘要 | 文件 |

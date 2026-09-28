@@ -64,7 +64,7 @@ vGPU 切片规格 `rtx4090-12g-4` 实例 E2E：
 
 ## 6. 遗留
 
-1. C（gpu-inventory 占用口径四缺陷）未修，待独立批次（精确到卡需 planning 持久化 device index 或读 device plugin 分配信息）；
+1. C（gpu-inventory 占用口径四缺陷）已由后续批次 GPU-OCCUPANCY-PODCOUNT-A 修复可修部分（多卡计数 + 分段回显，见 `gpu-occupancy-podcount-a.md`）；精确绑卡需 planning 持久化 device index 或读 device plugin 分配信息，仍为独立批次；
 2. ani-system 未部署本批次镜像（当前被 `emailfix-20260928` 改动线覆盖，需协调并集）；reconcile-worker 仍缺 `GPU_QUOTA_ENABLED` 与新镜像；
 3. `PROVISIONING_TIMEOUT_MIN` 未配置时代码不启用超时兜底（`cfg.ProvisioningTimeoutMin > 0` 才挂 `WithProvisioningTimeoutMin`），provisioning 卡死无保护，建议两环境配置；
 4. 存量实例 `audit_id` 为空导致 reconcile 校验失败（旧 sandbox 记录），未处理；
