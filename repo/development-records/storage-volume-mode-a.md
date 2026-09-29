@@ -105,3 +105,4 @@ PR：[#195](https://github.com/e92nf872rp/ANI/pull/195)（`djm-afk:feat/volume-m
 - 存量 Filesystem 卷若要供 VM 使用需**删除重建**为 `volume_mode=block`；容器/GPU 容器不受影响。
 - `volume_mode` 列允许 NULL 并由代码兜底 `filesystem`，以兼容历史行与空值写入路径。
 - 方案 B 的实现与文档不在本分支（见 `backup/plan-b-volume-block-mode`）。
+- 前端对接说明：`repo/design/storage-volume-mode-frontend-integration.md`（`volume_mode` 可选、容器默认 filesystem、VM 需显式 block、VM 新建数据盘后端自动 block、模式不可变与存量卷需重建、错误码清单）。
