@@ -325,13 +325,14 @@ func main() {
 	var routeInstanceRuntime *router.InstanceRuntime
 	if instanceRuntime.Service != nil {
 		routeInstanceRuntime = &router.InstanceRuntime{
-			Service:        instanceRuntime.Service,
-			Store:          instanceRuntime.Store,
-			Operations:     instanceRuntime.Operations,
-			SandboxRuntime: instanceRuntime.SandboxRuntime,
-			TaskStore:      instanceRuntime.AsyncTasks,
-			RealProvider:   true,
-			Provider:       strings.TrimSpace(instanceRuntimeConfig.WorkloadProvider),
+			Service:             instanceRuntime.Service,
+			Store:               instanceRuntime.Store,
+			Operations:          instanceRuntime.Operations,
+			SandboxRuntime:      instanceRuntime.SandboxRuntime,
+			TaskStore:           instanceRuntime.AsyncTasks,
+			RealProvider:        true,
+			ReconcileController: instanceRuntime.ReconcileController,
+			Provider:            strings.TrimSpace(instanceRuntimeConfig.WorkloadProvider),
 		}
 	}
 	router.RegisterWithOptions(h, router.RegisterOptions{
