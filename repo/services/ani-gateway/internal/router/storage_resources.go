@@ -554,6 +554,9 @@ type stringListFilterSpec struct {
 	status        string
 	keyword       string
 	searchFieldID bool
+	// volumeMode filters the volume list by Kubernetes volumeMode (block /
+	// filesystem); empty means no filter. Only the volumes list consumes it.
+	volumeMode string
 }
 
 // storageListFilters parses the optional status + search_field + keyword query
@@ -561,8 +564,9 @@ type stringListFilterSpec struct {
 // storageMatchesFilters can compare against the same folded value.
 func storageListFilters(c *app.RequestContext) stringListFilterSpec {
 	spec := stringListFilterSpec{
-		status:  c.Query("state"),
-		keyword: strings.ToLower(strings.TrimSpace(c.Query("keyword"))),
+		status:     c.Query("state"),
+		keyword:    strings.ToLower(strings.TrimSpace(c.Query("keyword"))),
+		volumeMode: strings.ToLower(strings.TrimSpace(c.Query("volume_mode"))),
 	}
 	switch strings.TrimSpace(c.Query("search_field")) {
 	case "id":
@@ -660,6 +664,9 @@ func (api *storageAPI) listVolumes(ctx context.Context, c *app.RequestContext) {
 	items := make([]storageVolumeResponse, 0, len(records))
 	for _, record := range records {
 		if !storageMatchesFilters(record.State, filterSpec, record.VolumeID, record.Name) {
+			continue
+		}
+		if filterSpec.volumeMode != "" && strings.ToLower(strings.TrimSpace(record.VolumeMode)) != filterSpec.volumeMode {
 			continue
 		}
 		item := storageVolumeFromRecord(record)

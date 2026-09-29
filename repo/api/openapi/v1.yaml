@@ -6759,6 +6759,7 @@ paths:
         - { name: cursor, in: query, schema: { type: string } }
         - { name: in_use, in: query, schema: { type: boolean }, description: "按占用状态过滤；省略时不过滤。占用判定：被本租户活跃实例（pending/provisioning/starting/running/stopping）的 storage_attachments 引用" }
         - { name: state, in: query, schema: { type: string }, description: "按状态过滤（pending/available/failed/deleting/deleted）；省略时不过滤" }
+        - { name: volume_mode, in: query, schema: { type: string, enum: [block, filesystem] }, description: "按卷模式过滤（block=VM 数据盘/裸设备热插，filesystem=容器按目录挂载）；省略时不过滤" }
         - { name: search_field, in: query, schema: { type: string, enum: [id, name] }, description: "配合 keyword 限定匹配字段；name=按名称(默认)，id=按资源 ID。" }
         - { name: keyword, in: query, schema: { type: string }, description: "按名称/id 模糊过滤（大小写不敏感）；省略时不过滤" }
       responses:

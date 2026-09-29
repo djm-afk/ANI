@@ -807,6 +807,49 @@ func TestStorageHTTPVolumeListFiltersByKeywordAndStatus(t *testing.T) {
 	}
 }
 
+func TestStorageHTTPVolumeListFiltersByVolumeMode(t *testing.T) {
+	h := server.New()
+	h.Use(func(ctx context.Context, c *app.RequestContext) {
+		c.Set("tenant_id", "tenant-a")
+		c.Next(ctx)
+	})
+	registerStorageResourcesWithService(h.Group("/api/v1"), runtimeadapter.NewLocalStorageService())
+
+	// 默认卷为 filesystem，显式创建 block 卷。
+	performJSONRequest(t, h, http.MethodPost, "/api/v1/volumes", `{"idempotency_key":"mode-filter-fs","name":"mode-fs","size_gib":10,"volume_mode":"filesystem"}`, http.StatusCreated)
+	performJSONRequest(t, h, http.MethodPost, "/api/v1/volumes", `{"idempotency_key":"mode-filter-blk","name":"mode-blk","size_gib":10,"volume_mode":"block"}`, http.StatusCreated)
+
+	countItems := func(query string) int {
+		t.Helper()
+		body := performJSONRequest(t, h, http.MethodGet, "/api/v1/volumes"+query, "", http.StatusOK)
+		var decoded struct {
+			Items []map[string]any `json:"items"`
+		}
+		if err := json.Unmarshal(body, &decoded); err != nil {
+			t.Fatalf("decode %s: %v", body, err)
+		}
+		return len(decoded.Items)
+	}
+
+	if got := countItems(""); got != 2 {
+		t.Fatalf("volumes count = %d, want 2", got)
+	}
+	if got := countItems("?volume_mode=block"); got != 1 {
+		t.Fatalf("volume_mode=block count = %d, want 1", got)
+	}
+	if got := countItems("?volume_mode=filesystem"); got != 1 {
+		t.Fatalf("volume_mode=filesystem count = %d, want 1", got)
+	}
+	// 大小写不敏感归一。
+	if got := countItems("?volume_mode=BLOCK"); got != 1 {
+		t.Fatalf("volume_mode=BLOCK count = %d, want 1", got)
+	}
+	// 未知取值不命中任何卷。
+	if got := countItems("?volume_mode=raw"); got != 0 {
+		t.Fatalf("volume_mode=raw count = %d, want 0", got)
+	}
+}
+
 func TestStorageHTTPBucketListFiltersBySearchField(t *testing.T) {
 	h := server.New()
 	h.Use(func(ctx context.Context, c *app.RequestContext) {

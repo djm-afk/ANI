@@ -17,7 +17,7 @@ PR：[#195](https://github.com/e92nf872rp/ANI/pull/195)（`djm-afk:feat/volume-m
    - VM 建实例引用既有 `volume_id` 数据盘 → 必须 block；
    - 容器/GPU 容器建实例挂卷（目录挂载）→ 必须 filesystem，且在 provider apply **之前**校验，避免产生 provider 孤儿实例；
    - VM/容器 `attach_volume` 生命周期动作 → 同为上述模式要求，在记录 operation 之前拒绝。
-5. **`ListVolumes` 对 pending 卷也 re-observe**（与 `GetVolume` 对齐）：WFFC PVC 在首个消费者出现后绑定，否则 Console 列表永远停留在 `pending`。
+5. **`ListVolumes` 对 pending 卷也 re-observe**（与 `GetVolume` 对齐）：WFFC PVC 在首个消费者出现后绑定，否则 Console 列表永远停留在 `pending`；并新增 `GET /api/v1/volumes?volume_mode=block|filesystem` 列表过滤（大小写不敏感，可与 state/keyword/in_use 组合），便于前端按用途筛选（VM 盘 / 容器盘）。
 6. **DB 迁移** `storage_volumes.volume_mode`（可空 TEXT + CHECK，存量行回填 `filesystem`）。
 7. **契约附带纠正**：`CreateStorageVolumeRequest.storage_class` 默认值 `standard` → `ani-block`（代码侧兜底 `defaultVolumeStorageClassName` 本已是 `ani-block`，契约文字过去不一致）。
 

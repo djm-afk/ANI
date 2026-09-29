@@ -74,7 +74,19 @@ Content-Type: application/json
 
 > 前端可在卷列表/详情显示"用途：VM 数据盘 / 容器目录"，直接读 `volume_mode`。
 
-### 2.3 未变更的部分
+### 2.3 列表新增 `volume_mode` 过滤
+
+`GET /api/v1/volumes` 新增可选查询参数 `volume_mode`（枚举 `block` \| `filesystem`），用于按用途筛选：
+
+| 参数 | 取值 | 说明 |
+|---|---|---|
+| `volume_mode` | `block` \| `filesystem` | 省略时不过滤；大小写不敏感；未知取值不命中任何卷 |
+
+示例（只看 VM 卷）：`GET /api/v1/volumes?volume_mode=block`
+
+可与既有 `state` / `keyword` / `search_field` / `in_use` 组合使用。**用途**：VM"选择已有云盘"下拉可传 `volume_mode=block` 只拉 VM 盘；容器场景可传 `volume_mode=filesystem`。
+
+### 2.4 未变更的部分
 
 - 卷的挂载/卸载接口、快照、扩容、自动快照策略等**签名不变**。
 - 容器实例创建时的 `container.volume_mounts` / `gpu_container.volume_mounts`（`volume_id`+`mount_path`）**不变**。
@@ -142,6 +154,7 @@ Content-Type: application/json
 - [ ] "创建云盘"弹窗新增"用途"选择（VM 数据盘 / 容器目录），并映射为 `volume_mode`（`block` / `filesystem`）。
 - [ ] 创建请求带上 `volume_mode`（容器场景可不带，建议显式带上 `filesystem`）。
 - [ ] 卷列表/详情展示 `volume_mode`（用途标签）。
+- [ ] 卷列表按用途筛选：`GET /api/v1/volumes?volume_mode=block|filesystem`。
 - [ ] VM"选择已有云盘"只列 `volume_mode=block` 的卷；`filesystem` 卷置灰 + 提示。
 - [ ] VM/容器 `attach_volume` 前按 `volume_mode` 做前置过滤。
 - [ ] 处理两类新增错误：卷创建/建实例的 `400 BAD_REQUEST`、生命周期的 `400 INSTANCE_LIFECYCLE_FAILED`，把 message 展示给用户（含"需重建"提示）。
