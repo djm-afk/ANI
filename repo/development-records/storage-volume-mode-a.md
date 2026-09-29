@@ -109,8 +109,25 @@ PR：[#195](https://github.com/e92nf872rp/ANI/pull/195)（`djm-afk:feat/volume-m
 - `go build ./...`（`repo/services/ani-gateway`）通过；
 - `go test ./...`（`repo/services/ani-gateway` 全部 4 个包）通过；
 - `gofmt -l`（ani-gateway 包）无输出；`git diff --check` 通过；
-- `validate_openapi_spec`（YAML 解析 OK）与 `validate_storage_alpha_contract`（valid）直跑通过；
-- 未复跑 pkg 全量测试与本轮 SDK/docs 生成（本轮未触碰 `pkg/`、请求/响应 DTO 与 schema 结构，仅新增 query 参数与纯 handler 过滤逻辑；PR CI 的 OpenAPI Lint / SDK 幂等门禁会再次覆盖）。
+- `validate_openapi_spec`（YAML 解析 OK）与 `validate_storage_alpha_contract`（valid）直跑通过。
+
+### live 验证 PASS（2026-09-29，ani-test2，镜像 `test2-20260929-availforinstance` digest `sha256:894af9103776…9fb0`）
+
+- 构建/部署：从本 worktree（merge 06d94fd，已合入 origin/main）上传 `pkg`/`runtimeadmin`/`services/ani-gateway` 到构建机构建并推送 Harbor；`kubectl set image` 滚动 ani-test2 gateway（未改 env），rollout 成功，Pod 1/1 Running、healthz 200（启动期 DB 未就绪重试导致 4 次容器重启，DB 就绪后稳定，重启数不再增长）；部署前该环境 gateway 为 kaiwu 线 `anisys-20260928-kaiwu.3`，回滚 tag 同。**未触碰 ani-system。**
+- 冲突解决：origin/main 合入 `feat/volume-mode-block`（merge commit 06d94fd），README.md / ANI-06 两处为同位置各自新增批次记录的冲突，两侧条目均保留；合并后 ani-gateway 全部包 `go test` 通过、`pkg` build/test 通过（仅既有 Windows sandbox symlink 两用例环境性失败）、契约门禁复跑通过。
+- **API 七断言全 PASS（tenant-a，复用既有 running VM `test-rebuild2` 与 running 容器）**：
+
+| 用例 | 结果 |
+|---|---|
+| `GET /volumes?limit=100&state=pending,available`（多值） | ✅ 200，新建 block/filesystem 两卷均返回（修复前必返回空） |
+| `?limit=100&state=pending,available&available_for_instance_id=<VM>`（前端原始查询） | ✅ 200，只含 block 卷 |
+| `?…&available_for_instance_id=<容器>` | ✅ 200，只含 filesystem 卷 |
+| `available_for_instance_id=inst-nope-*`（未知实例） | ✅ 400 BAD_REQUEST（不再静默空列表） |
+| attach 回归：容器+filesystem 卷 / VM+block 卷 | ✅ 均 200（merge 后 volume_mode 校验路径无回退） |
+| 占用卷排除：filesystem 卷挂到容器后 | ✅ 从该容器的 `available_for_instance_id` 列表消失 |
+| 清理：detach ×2 + DELETE ×2 | ✅ 全 200 控制面记录回收 |
+
+- 验证脚本：`ai-scripts/vm_availforinstance_build_deploy.py`、`ai-scripts/vm_availforinstance_verify.py`、`ai-scripts/vm_availforinstance_probe*.py`（.gitignore 排除）。
 
 ## 备注
 
