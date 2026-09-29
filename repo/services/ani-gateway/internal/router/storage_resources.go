@@ -551,7 +551,7 @@ func tagFilesystemConsumers(resp *storageFilesystemResponse, consumers []runtime
 // storage list handlers. searchField forces keyword to match a specific field
 // ("id" or "name"); an empty searchField keeps the legacy nameParts matching.
 type stringListFilterSpec struct {
-	status        string
+	statuses      []string
 	keyword       string
 	searchFieldID bool
 	// volumeMode filters the volume list by Kubernetes volumeMode (block /
@@ -560,11 +560,18 @@ type stringListFilterSpec struct {
 }
 
 // storageListFilters parses the optional status + search_field + keyword query
-// parameters. keyword is lower-cased here so the per-record match in
-// storageMatchesFilters can compare against the same folded value.
+// parameters. state accepts a comma-separated list (any-of match); keyword is
+// lower-cased here so the per-record match in storageMatchesFilters can
+// compare against the same folded value.
 func storageListFilters(c *app.RequestContext) stringListFilterSpec {
+	var statuses []string
+	for _, raw := range strings.Split(c.Query("state"), ",") {
+		if state := strings.TrimSpace(raw); state != "" {
+			statuses = append(statuses, state)
+		}
+	}
 	spec := stringListFilterSpec{
-		status:     c.Query("state"),
+		statuses:   statuses,
 		keyword:    strings.ToLower(strings.TrimSpace(c.Query("keyword"))),
 		volumeMode: strings.ToLower(strings.TrimSpace(c.Query("volume_mode"))),
 	}
@@ -578,12 +585,22 @@ func storageListFilters(c *app.RequestContext) stringListFilterSpec {
 }
 
 // storageMatchesFilters reports whether a storage record survives the status,
-// search_field and keyword list filters. When spec.searchFieldID is true the
-// supplied idPart must contain keyword; otherwise keyword matches any
-// supplied name segment (e.g. volume name, or an object's bucket/key).
+// search_field and keyword list filters. The status list is an any-of match.
+// When spec.searchFieldID is true the supplied idPart must contain keyword;
+// otherwise keyword matches any supplied name segment (e.g. volume name, or
+// an object's bucket/key).
 func storageMatchesFilters(recordState ports.StorageResourceState, spec stringListFilterSpec, idPart string, nameParts ...string) bool {
-	if spec.status != "" && string(recordState) != spec.status {
-		return false
+	if len(spec.statuses) > 0 {
+		matched := false
+		for _, status := range spec.statuses {
+			if string(recordState) == status {
+				matched = true
+				break
+			}
+		}
+		if !matched {
+			return false
+		}
 	}
 	if spec.keyword == "" {
 		return true
@@ -612,6 +629,32 @@ func storageInUseFilter(c *app.RequestContext) (bool, bool, error) {
 		return false, false, fmt.Errorf("invalid in_use value %q", raw)
 	}
 	return true, parsed, nil
+}
+
+// storageAvailableForInstanceFilter parses the optional
+// available_for_instance_id query parameter and resolves the target instance
+// into the volume_mode it can mount: VM data disks hotplug as raw block
+// devices, every other workload kind mounts a filesystem directory. The
+// second return reports whether the filter was requested. Unknown instances
+// (or instances owned by another tenant) return an error so handlers can
+// reject with 400 instead of silently returning an empty list.
+func (api *storageAPI) storageAvailableForInstanceFilter(ctx context.Context, tenantID string, c *app.RequestContext) (string, bool, error) {
+	instanceID := strings.TrimSpace(c.Query("available_for_instance_id"))
+	if instanceID == "" {
+		return "", false, nil
+	}
+	if api.instanceStore == nil {
+		return "", true, fmt.Errorf("available_for_instance_id %q requires the instance store", instanceID)
+	}
+	record, err := api.instanceStore.Get(ctx, tenantID, instanceID)
+	if err != nil {
+		return "", true, fmt.Errorf("unknown available_for_instance_id %q", instanceID)
+	}
+	mode := ports.StorageVolumeModeFilesystem
+	if record.Kind == ports.WorkloadKindVM {
+		mode = ports.StorageVolumeModeBlock
+	}
+	return mode, true, nil
 }
 
 // storageLoadConsumerIndex builds the tenant-wide consumer index used by
@@ -655,6 +698,11 @@ func (api *storageAPI) listVolumes(ctx context.Context, c *app.RequestContext) {
 		writeInstanceError(c, http.StatusBadRequest, "BAD_REQUEST", err.Error())
 		return
 	}
+	requiredMode, forInstance, err := api.storageAvailableForInstanceFilter(ctx, instanceTenantID(c), c)
+	if err != nil {
+		writeInstanceError(c, http.StatusBadRequest, "BAD_REQUEST", err.Error())
+		return
+	}
 	filterSpec := storageListFilters(c)
 	consumerIndex, err := api.storageLoadConsumerIndex(ctx, instanceTenantID(c))
 	if err != nil {
@@ -669,9 +717,17 @@ func (api *storageAPI) listVolumes(ctx context.Context, c *app.RequestContext) {
 		if filterSpec.volumeMode != "" && strings.ToLower(strings.TrimSpace(record.VolumeMode)) != filterSpec.volumeMode {
 			continue
 		}
+		if forInstance && strings.ToLower(strings.TrimSpace(record.VolumeMode)) != requiredMode {
+			continue
+		}
 		item := storageVolumeFromRecord(record)
 		tagVolumeConsumers(&item, consumerIndex[storageVolumeConsumerKey(record.VolumeID)])
 		if filterSet && item.InUse != wantInUse {
+			continue
+		}
+		// available_for_instance_id implies a mountable volume: an occupied
+		// volume can never be attached to the target instance.
+		if forInstance && item.InUse {
 			continue
 		}
 		items = append(items, item)

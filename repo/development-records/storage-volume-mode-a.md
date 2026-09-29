@@ -20,6 +20,7 @@ PR：[#195](https://github.com/e92nf872rp/ANI/pull/195)（`djm-afk:feat/volume-m
 5. **`ListVolumes` 对 pending 卷也 re-observe**（与 `GetVolume` 对齐）：WFFC PVC 在首个消费者出现后绑定，否则 Console 列表永远停留在 `pending`；并新增 `GET /api/v1/volumes?volume_mode=block|filesystem` 列表过滤（大小写不敏感，可与 state/keyword/in_use 组合），便于前端按用途筛选（VM 盘 / 容器盘）。
 6. **DB 迁移** `storage_volumes.volume_mode`（可空 TEXT + CHECK，存量行回填 `filesystem`）。
 7. **契约附带纠正**：`CreateStorageVolumeRequest.storage_class` 默认值 `standard` → `ani-block`（代码侧兜底 `defaultVolumeStorageClassName` 本已是 `ani-block`，契约文字过去不一致）。
+8. **（追加，2026-09-29）卷列表过滤修复与"按实例可挂载"过滤**：Console VM 详情挂载云盘请求 `GET /volumes?state=pending,available&available_for_instance_id=…` 返回空列表。根因有二：① `state` 过滤为单值精确匹配，`"pending,available"` 不命中任何卷；② `available_for_instance_id` 是前端自造参数，后端契约与实现均不存在（静默忽略）。修复：`state` 支持逗号分隔多值 any-of（volumes/filesystems/objects/buckets/vector stores 共用过滤实现同步生效）；`available_for_instance_id` 进入契约并实现——校验实例存在且属于本租户（否则 400），按实例 Kind 推导要求的 `volume_mode`（VM=block，其余=filesystem），并排除占用中的卷（in_use）。
 
 ## 背景与决策（方案 A 取代方案 B）
 
@@ -46,7 +47,9 @@ PR：[#195](https://github.com/e92nf872rp/ANI/pull/195)（`djm-afk:feat/volume-m
 | `pkg/adapters/runtime/storage_service.go` | 修改 | `normalizeStorageVolumeMode`（空值/大小写归一，默认 filesystem）、`requireVolumeMode`（模式错配统一错误）；create fingerprint 纳入 mode；`ListVolumes` 两条路径对 pending 卷 re-observe |
 | `pkg/adapters/runtime/storage_store.go` | 修改 | `storage_volumes` INSERT/SELECT 增加 `volume_mode`；UPSERT `COALESCE(EXCLUDED.volume_mode, ...)` 保护既有值 |
 | `pkg/adapters/runtime/instance_service.go` | 修改 | `provisionVMDataDisks` 新建数据盘 block + 既有 `volume_id` 数据盘必须 block；`validateCreateStorageModes`（容器挂卷 filesystem，pre-apply）；`validateAttachVolumeMode`（attach_volume 按 kind 校验） |
-| `services/ani-gateway/internal/router/storage_resources.go` | 修改 | 请求/响应 DTO 增加 `volume_mode` 并映射 |
+| `services/ani-gateway/internal/router/storage_resources.go` | 修改 | 请求/响应 DTO 增加 `volume_mode` 并映射；（追加）`state` 多值 any-of 解析、`storageAvailableForInstanceFilter`（available_for_instance_id → 实例存在性校验 + 模式推导 + 排除占用卷） |
+| `services/ani-gateway/internal/router/vector_store_resources.go` | 修改 | （追加）共用过滤结构 `statuses` 多值化后同步 any-of 匹配 |
+| `services/ani-gateway/internal/router/storage_resources_test.go` | 修改 | （追加）`state` 多值断言；`TestStorageHTTPVolumeListAvailableForInstance`（VM 只见空闲 block、容器只见 filesystem、组合 `state=pending,available`、占用卷排除、未知实例 400） |
 | `pkg/adapters/runtime/instance_service_test.go` | 修改 | 2 个既有用例补种 `storedVolumes`（VM 既有盘 block、容器挂卷 filesystem）；新增 3 个模式校验用例 |
 | `pkg/adapters/runtime/storage_service_test.go` | 修改 | 新增 `volume_mode` 默认/归一/非法值用例 |
 | `pkg/adapters/runtime/storage_renderer_test.go` | 修改 | 新增 volumeMode 渲染用例（block/filesystem/空值回退） |
@@ -98,6 +101,16 @@ PR：[#195](https://github.com/e92nf872rp/ANI/pull/195)（`djm-afk:feat/volume-m
 
 - VM 建实例引用既有 filesystem 数据盘（`provisionVMDataDisks` 路径）未跑 live（避免残留 VM 消耗配额），由单测 `TestLocalInstanceServiceCreateRejectsFilesystemVolumeForVMDataDisk`（断言 provider apply 前即拒绝、`orchestrator.creates==0`）覆盖；attach 路径（`validateAttachVolumeMode`）已 live 证明同一语义。
 - 容器 + volume 挂载的 PVC 绑定：容器 attach 返回 200，但目标 PVC 仍 `Pending`（无消费者 Pod），属**容器挂块存储卷**的既有挂载机制（容器-3 RWO 约束/绑定路径），非本批次范围；本批次容器侧要求仅为**模式校验**，已 live 证明。
+
+## 追加改动验证（2026-09-29，卷列表过滤 + available_for_instance_id）
+
+本机等价执行（无 `make`，Go 用 `C:\Program Files\Go\bin`，Python 用 miniconda）：
+
+- `go build ./...`（`repo/services/ani-gateway`）通过；
+- `go test ./...`（`repo/services/ani-gateway` 全部 4 个包）通过；
+- `gofmt -l`（ani-gateway 包）无输出；`git diff --check` 通过；
+- `validate_openapi_spec`（YAML 解析 OK）与 `validate_storage_alpha_contract`（valid）直跑通过；
+- 未复跑 pkg 全量测试与本轮 SDK/docs 生成（本轮未触碰 `pkg/`、请求/响应 DTO 与 schema 结构，仅新增 query 参数与纯 handler 过滤逻辑；PR CI 的 OpenAPI Lint / SDK 幂等门禁会再次覆盖）。
 
 ## 备注
 
